@@ -1,5 +1,7 @@
 # Kyoto(kens) — Pacing the Frontier
 
+<p align="center"><img src="art/kyotokens-cover.png" alt="Kyoto(kens) game cover" width="360"></p>
+
 A static, single-page Three.js browser game. You play Kyoto, a golden retriever let loose on a
 stylized San Francisco: collect the **K Y O T O** letters, bark at agents, hack drones, chase the
 CEO duo, snap 15 album photos, and surf out to Alcatraz.

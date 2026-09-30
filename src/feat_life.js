@@ -15,13 +15,17 @@ const cards = life.cards = [
   { id: 'yokohama', who: 'Yokohama', city: 'ICELAND', stamp: 'IS', color: '#8577bc', story: 'Howls at the northern lights. Still waiting for the sky to howl back.' },
   { id: 'munich', who: 'The whole pack', city: 'MUNICH · SECRET', stamp: 'DE', color: '#7eab6b', story: 'Everyone wore Tracht. Nobody could explain the sausages missing from the photo.', secret: true }
 ];
-let group, stream, nearest, marking, leg, legRest, clock = 0, scanT = 0, keyF = false, secret;
+let group, stream, nearest, marking, leg, clock = 0, scanT = 0, keyF = false, secret;
 let album, albumButton, albumOpen = false, resumeAlbum = false, previousFocus;
 let imageFiles = null, imageScanAt = -1e6, imageScan;
 const found = new Set();
 try { for (const id of JSON.parse(localStorage.getItem('kyoto-family-v1') || '[]')) if (cards.some(c => c.id === id)) found.add(id); } catch (_) {}
 const dummy = new T.Object3D(), mat4 = new T.Matrix4(), wp = new T.Vector3();
 const up = new T.Vector3(0, 1, 0), direction = new T.Vector3();
+// Marking stance: Kyoto's rig bones by role (b1/b-1 hind, f1/f-1 front; 1 = model +X = his left). The mixer only rewrites a bone when its
+// sampled value changes (idle's legs/root are constant), so each step's offsets are undone before the next mixer update and on release.
+const rig = {}, restPose = new Map(), rigQ = [new T.Quaternion(), new T.Quaternion(), new T.Quaternion()], AXIS_X = new T.Vector3(1, 0, 0), AXIS_Z = new T.Vector3(0, 0, 1);
+const ease = x => { x = K.U.clamp(x, 0, 1); return x * x * (3 - 2 * x); };
 const whiteMat = K.toon('#ffffff', { vertexColors: true });
 const geoCache = new Map();
 // Bake vertex colours: a complete toon body is one draw call, shared by every clone.
@@ -85,7 +89,10 @@ function buildHydrants(scene) {
   group.add(im); life.originalHydrants = positions.length - 8;
   const particles = new T.InstancedMesh(new T.SphereGeometry(1, 6, 4), K.toon('#ffe642', { emissive: '#a97300', emissiveIntensity: .22 }), 28);
   particles.instanceMatrix.setUsage(T.DynamicDrawUsage); particles.frustumCulled = false; particles.visible = false; group.add(particles); stream = particles;
-  A.kyoto.root.traverse(o => { if (/(?:^bl_up[._]?L$|thigh.*[lr]|(?:back|rear|hind).*leg|leg.*(?:back|rear|hind))/i.test(o.name) && !leg) leg = o; });
+  A.kyoto.root.traverse(o => { if (/(?:^bl_up[._]?L$|thigh.*[lr]|(?:back|rear|hind).*leg|leg.*(?:back|rear|hind))/i.test(o.name) && !leg) leg = o;
+    const m = /^([bf])l_up[._]?([LR])$/i.exec(o.name); if (m) rig[m[1].toLowerCase() + (m[2].toUpperCase() === 'L' ? 1 : -1)] = o; });
+  const body = rig.b1 && rig.b1.parent && rig.b1.parent.parent, under = o => { for (let n = o; n; n = n.parent) if (n === body) return true; return false; };
+  rig.body = body && body !== A.kyoto.root && ['b1', 'b-1', 'f1', 'f-1'].every(n => rig[n] && under(rig[n])) ? body : null;   // spine root above hips and shoulders, for the weight shift
 }
 function flagFor(h) {
   const r = new T.Group();
@@ -96,7 +103,7 @@ function finishMark(reward) {
   if (!marking) return;
   const h = marking.h;
   if (A.player.ext === holdPose) A.player.ext = null;
-  if (leg && legRest) leg.quaternion.copy(legRest);
+  if (marking.posed) for (const [bone, q] of restPose) bone.quaternion.copy(q);
   stream.visible = false; marking = null;
   if (!reward) return;
   h.cooldown = 35; h.marked = true; if (!h.flag) h.flag = flagFor(h); h.flag.visible = true;
@@ -107,16 +114,46 @@ function finishMark(reward) {
   if (ped) A.say(ped.tag, life.marked % 2 ? 'Ew! …Good boy?' : 'That is municipal property!', 2.5);
   updateAlbumButton();
 }
+// rotate a bone by q, expressed in Kyoto's model space (x = his left, y = up, z = forward), about the bone's own pivot
+function modelTurn(bone, q) {
+  const pq = rigQ[1].identity(); for (let n = bone.parent; n && n !== A.kyoto.root; n = n.parent) pq.premultiply(n.quaternion);
+  bone.quaternion.premultiply(rigQ[2].copy(pq).conjugate().multiply(q).multiply(pq));
+}
+function hold(bone) { if (!bone) return false; if (!restPose.has(bone)) restPose.set(bone, new T.Quaternion()); restPose.get(bone).copy(bone.quaternion); return true; }
+// Layered on the live idle pose: hips roll away from the hydrant (other three legs stay planted), the hydrant-side hind leg abducts, the knee tucks.
+function stance(m, lift) {
+  const s = m.side, bone = m.leg; if (!bone || lift <= 0) return;
+  restPose.clear(); m.posed = true;   // restPose now holds this step's un-posed values
+  const lean = rig.body ? .07 * s * lift : 0, knee = m.named ? bone.children.find(c => c.isBone) : null;
+  if (lean && hold(rig.body)) { modelTurn(rig.body, rigQ[0].setFromAxisAngle(AXIS_Z, lean)); for (const n of ['b' + -s, 'f1', 'f-1']) if (hold(rig[n])) modelTurn(rig[n], rigQ[0].setFromAxisAngle(AXIS_Z, -lean)); }
+  hold(bone); modelTurn(bone, rigQ[0].setFromAxisAngle(AXIS_Z, s * 1.05 * lift - lean).multiply(rigQ[1].setFromAxisAngle(AXIS_X, -.12 * lift)));
+  if (hold(knee)) knee.rotateX(.55 * lift);
+}
 function holdPose(dt) {
-  const p = A.player, k = A.kyoto;
-  p.speed = p.vx = p.vz = 0; k.play('idle', .1); k.mixer.update(dt); k.root.position.set(p.x, p.y, p.z); k.root.rotation.y = p.heading;
+  const p = A.player, k = A.kyoto, m = marking;
+  p.speed = p.vx = p.vz = p.gait = 0;
+  let pace = 0;
+  if (m && m.t < .4) {   // settle: a short step into the marking spot while turning side-on (collision- and ledge-safe)
+    const e = ease(m.t / .34), ox = p.x, oz = p.z, y = p.y;
+    W.move(p, m.x0 + (m.tx - m.x0) * e - p.x, m.z0 + (m.tz - m.z0) * e - p.z, .7, y, { grounded: true, test: (x, z) => Math.abs(W.groundAt(x, z, y, .7) - y) < .35 });
+    p.y = W.groundAt(p.x, p.z, y, .7); p.heading = K.U.lerpAng(m.h0, m.th, e);
+    pace = dt > 0 ? Math.hypot(p.x - ox, p.z - oz) / dt : 0;
+  }
+  if (pace > 1.5) k.play('trot', .15, K.U.clamp(pace / 5.4, .5, 1.5)); else k.play('idle', .2);
+  if (m && m.posed) { for (const [bone, q] of restPose) bone.quaternion.copy(q); m.posed = false; }
+  k.mixer.update(dt); k.root.position.set(p.x, p.y, p.z); k.root.rotation.y = p.heading;
+  if (m) stance(m, ease((m.t - .18) / .3) * (1 - ease((m.t - 1.42) / .3)));   // leg up by ~0.5 s, held, lowered by ~1.7 s
 }
 function mark() {
   const p = A.player, h = nearest;
   if (!h || Math.hypot(h.x - p.x, h.z - p.z) > 3.4 || Math.abs(h.y - p.y) > 1.5 || h.cooldown > 0 || marking || p.ext || p.mode !== 'walk' || !p.onGround || p.board > 0) return false;
-  p.heading = Math.atan2(h.x - p.x, h.z - p.z) - Math.PI / 2;
-  if (leg) legRest = leg.quaternion.clone();
-  marking = { h, t: 0 }; p.ext = holdPose; p.inv = Math.max(p.inv, 2.1); sound('click'); return true;
+  // lift the hind leg on whichever side the hydrant already is (least turning); fall back to the one leg the rig offers
+  const dx = h.x - p.x, dz = h.z - p.z, want = dx * Math.cos(p.heading) - dz * Math.sin(p.heading) >= 0 ? 1 : -1;
+  const side = rig['b' + want] ? want : rig['b' + -want] ? -want : leg ? 1 : want, th = Math.atan2(dx, dz) - side * Math.PI / 2;
+  // stand side-on with the hydrant 1.45 m out on that side, level with the hind legs, so the raised paw hovers beside it
+  const lx = side * 1.45, lz = -.6, c = Math.cos(th), sn = Math.sin(th);
+  marking = { h, t: 0, side, leg: rig['b' + side] || (side === 1 ? leg : null), named: !!rig['b' + side], x0: p.x, z0: p.z, h0: p.heading, th, tx: h.x - (lx * c + lz * sn), tz: h.z - (lz * c - lx * sn) };
+  p.ext = holdPose; p.inv = Math.max(p.inv, 2.1); sound('click'); return true;
 }
 life.mark = mark;
 function tickHydrants(dt) {
@@ -502,15 +539,20 @@ K.on('step', dt => {
 });
 K.on('frame', () => {
   if (!marking) return;
-  const p = A.player, h = marking.h, t = marking.t, lift = Math.min(1, t * 4, (1.8 - t) * 5);
-  if (leg && legRest) { leg.quaternion.copy(legRest); leg.rotateY(-1.0 * lift); leg.rotateZ(.8 * lift); }
-  stream.visible = t > .22 && t < 1.65;
+  const p = A.player, h = marking.h, t = marking.t, s = marking.side;
+  // the stream runs once the leg is up: its front reaches the hydrant, then its tail follows at the end
+  const head = ease((t - .45) / .14), tail = ease((t - 1.3) / .16);
+  stream.visible = head > 0 && tail < 1;
   if (!stream.visible) return;
-  const sx = p.x - Math.sin(p.heading) * .55, sz = p.z - Math.cos(p.heading) * .55;
+  // origin under the belly just ahead of the hind legs (model space s*.06, .82, -.2); aim at the hydrant barrel's near face, ~.55 m up
+  const c = Math.cos(p.heading), sn = Math.sin(p.heading), lx = s * .06, lz = -.2;
+  const sx = p.x + lx * c + lz * sn, sy = p.y + .82, sz = p.z - lx * sn + lz * c;
+  const nx = sx - h.x, nz = sz - h.z, nl = Math.hypot(nx, nz) || 1, tx = h.x + nx / nl * .3, ty = h.y + .55, tz = h.z + nz / nl * .3;
+  const arc = .1 + .06 * Math.hypot(tx - sx, tz - sz);
   for (let i = 0; i < 28; i++) {
-    const u = (i / 28 + t * 1.5) % 1;
-    dummy.position.set(sx + (h.x - sx) * u, p.y + .68 * (1 - u) + (h.y - p.y + .25) * u + Math.sin(u * Math.PI) * .75, sz + (h.z - sz) * u + Math.sin(i * 13 + t * 19) * .035);
-    dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(.04 + .025 * u); dummy.updateMatrix(); stream.setMatrixAt(i, dummy.matrix);
+    const u = tail + (head - tail) * ((i / 28 + t * 1.6) % 1);
+    dummy.position.set(sx + (tx - sx) * u + Math.sin(i * 13 + t * 19) * .02, sy + (ty - sy) * u + arc * 4 * u * (1 - u), sz + (tz - sz) * u + Math.cos(i * 7 + t * 17) * .02);
+    dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(.035 + .02 * u); dummy.updateMatrix(); stream.setMatrixAt(i, dummy.matrix);
   }
   stream.instanceMatrix.needsUpdate = true;
 });
