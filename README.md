@@ -9,6 +9,17 @@ database. Non-commercial parody fan game.
 
 **Play:** <https://claude.ai/artifact/Xt7w9RygtqKaSxX92AwrpS>
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Title screen](docs/screenshots/title.jpg) | ![Street scene in San Francisco](docs/screenshots/sf-street.jpg) |
+| **Title screen** — click to start the run | **The city** — Kyoto on the street, HUD and minimap live |
+| ![Sea lions on the waterfront](docs/screenshots/sea-lions.jpg) | ![CEO standee encounter](docs/screenshots/ceos-cutscene.jpg) |
+| **The waterfront** — sea lions, gulls and boats | **The CEO duo** — one of the running gags |
+| ![Taking a photo at a photo spot](docs/screenshots/photo-spot.jpg) | ![End-of-run summary screen](docs/screenshots/end-screen.jpg) |
+| **Photo spots** — 15 album photos to collect | **End of run** — tokens, beers, photos and best time |
+
 ## Run locally
 
 The game is plain static files, but it loads ES-free `<script>` tags and uses `fetch` for its
@@ -64,6 +75,7 @@ tex/              runtime textures (billboards, murals, magazines, fur, ground d
   assets/src/     unmodified 1K Poly Haven sources (provenance only, not loaded)
 photos/           album photos (photos/web/) plus the Alcatraz PNG
 art/              CEO portraits and cut-out art, family postcards, sign art
+docs/screenshots/ README screenshots, captured from the running game
 ```
 
 ## Assets and CDN
