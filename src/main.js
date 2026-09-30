@@ -134,7 +134,7 @@ g.start = function (restart) {
   K.sceneCam = null; UI.clearCam(); UI.reset(); K.resetInput(); A.hideTags = false; K.post.pause.value = K.post.danger.value = K.post.flash.value = 0; barkCool = 0; hudT = mmT = 0;
   if (P.car) { P.car.mode = 'parked'; P.car.speed = 0; }
   const S = W.HOME.start;
-  Object.assign(P, { ext: null, x: S.x, z: S.z, y: W.terrainH(S.x, S.z), vy: 0, heading: S.heading, speed: 0, mode: 'walk', onGround: true, stun: 0, inv: 0, stamina: 1, board: 0, car: null, carT: 0, cable: null, vx: 0, vz: 0, jumpBuffer: 0, coyote: 0, stamDelay: 0, barkT: 0, poseT: 0, safe: null, interactT: .25, squash: 0 });
+  Object.assign(P, { ext: null, x: S.x, z: S.z, y: W.terrainH(S.x, S.z), vy: 0, heading: S.heading, speed: 0, gait: 0, mode: 'walk', onGround: true, stun: 0, inv: 0, stamina: 1, board: 0, car: null, carT: 0, cable: null, vx: 0, vz: 0, jumpBuffer: 0, coyote: 0, stamDelay: 0, barkT: 0, poseT: 0, safe: null, interactT: .25, squash: 0 });
   A.kyoto.board.visible = false; if (A.kyoto.root.parent !== scene) scene.add(A.kyoto.root); A.kyoto.root.scale.setScalar(1); A.kyoto.root.visible = true; A.kyoto.root.rotation.set(0, P.heading, 0); A.kyoto.play('idle');
   g.endCam = null; g.beers = 0; if (A.leash) A.leash.main.m.visible = false;
   Object.assign(g, { time: 0, tokens: 0, inv: {}, wiggles: 3, buffs: { ghost: 0, magnet: 0, turbo: 0, jammer: 0, buzz: 0 }, flowT: 0, duoT: 30, mcpCool: 0, magT: 0, told: {}, shake: 0, hitStop: 0, camReset: true, photos: 0, skipReq: false });
@@ -209,11 +209,26 @@ function setGhost(on) { if (on === ghostOn && A.kyoto.ghostReady) return; ghostO
   A.kyoto.root.traverse(o => { if (!o.isMesh) return; for (const m of Array.isArray(o.material) ? o.material : [o.material]) { if (!m.userData.kyotoBase) m.userData.kyotoBase = { opacity: m.opacity, transparent: m.transparent, depthWrite: m.depthWrite }; const b = m.userData.kyotoBase; m.transparent = on || b.transparent; m.opacity = on ? b.opacity * .4 : b.opacity; m.depthWrite = on ? false : b.depthWrite; m.needsUpdate = true; } });
 }
 function juice(shake, squash, stop) { if (K.reduceMotion) return; g.shake = Math.max(g.shake || 0, shake); P.squash = Math.max(P.squash || 0, squash); g.hitStop = Math.max(g.hitStop || 0, stop || 0); }
+// Gait: stride cadence (Hz) rises sub-linearly with ground speed, continuous across the trot→run hand-off (run stance speed ≈ 8.5 u/s at 1×).
+const cadence = s => 1.6 * Math.pow(Math.max(s, 0) / 7, s < 7 ? .6 : .85);
+function playGait(k, s, braking) {
+  const was = k.curName, prev = k.cur;
+  // overlapping bands (hysteresis) so the clip never flickers; a braking stop skips the in-between trot
+  const name = was === 'run' ? (s > 6 ? 'run' : braking ? (s > 3 ? 'run' : 'idle') : 'trot')
+    : was === 'trot' ? (s > 7.5 ? 'run' : s < (braking ? 1.2 : .45) ? 'idle' : 'trot')
+    : s > 7.5 ? 'run' : s > (braking ? 3 : .9) ? 'trot' : 'idle';
+  if (name === 'idle') return k.play('idle', braking ? .3 : .25);
+  const clip = k.actions[name] && k.actions[name].getClip();
+  k.play(name, .2, U.clamp(cadence(s) * (clip ? clip.duration : 1), name === 'run' ? .7 : .35, name === 'run' ? 2.4 : 1.6));
+  // trot↔run: carry the stride phase across (front-left touchdown sits half a cycle apart in the two clips)
+  if (prev && k.cur !== prev && (was === 'trot' || was === 'run')) k.cur.time = ((prev.time / prev.getClip().duration + .5) % 1) * k.cur.getClip().duration;
+}
 
 function updatePlayer(dt) {
   for (const k in g.buffs) if (g.buffs[k] > 0) g.buffs[k] = Math.max(0, g.buffs[k] - dt);
   P.inv = Math.max(0, P.inv - dt); P.stun = Math.max(0, P.stun - dt);
   const k = A.kyoto; P.interactT = Math.max(0, (P.interactT || 0) - dt); setGhost(g.buffs.ghost > 0);
+  if (P.ext || P.mode !== 'walk') P.gait = 0;   // other modes drive their own clips; walking resumes from a standstill cadence
   if (P.ext) return P.ext(dt);   // a feature module (e.g. surf) drives Kyoto
   if (P.mode === 'car') return updateDrive(dt);
   if (P.mode === 'cable') return updateCable(dt);
@@ -229,12 +244,19 @@ function updatePlayer(dt) {
   const onBoard = P.board > 0, sprint = inp.sprint && mag > .2 && (P.stamina > .08 || g.buffs.buzz > 0);
   if (sprint && g.buffs.buzz <= 0) { P.stamina = Math.max(0, P.stamina - dt * .18); P.stamDelay = .8; } else { P.stamDelay = (P.stamDelay || 0) - dt; if (P.stamDelay <= 0) P.stamina = Math.min(1, P.stamina + dt * .14); }
   let max = onBoard ? 21 : 16; if (sprint) max *= onBoard ? 1.2 : 1.38; if (g.buffs.turbo > 0) max *= 1.25;
-  if (mag) { const th = Math.atan2(MOVE.x, MOVE.y); P.heading = U.lerpAng(P.heading, th, 1 - Math.exp(-dt * (onBoard ? 12 : 20))); }
+  let align = 1;
+  if (mag) { const th = Math.atan2(MOVE.x, MOVE.y);
+    if (onBoard) P.heading = U.lerpAng(P.heading, th, 1 - Math.exp(-dt * 12));
+    else {   // on foot: same response for small corrections, but a sharp reversal pivots (capped turn rate, speed eased until facing) instead of snapping or moonwalking
+      const turn = U.angDiff(th, P.heading) * (1 - Math.exp(-dt * 20)); P.heading += U.clamp(turn, -13 * dt, 13 * dt);
+      if (P.onGround) { const facing = Math.cos(U.angDiff(th, P.heading)); align = U.clamp((facing - .1) / .9, 0, 1); align *= align; }  // pivot before accelerating through a reversal; never slide backward
+    }
+  }
   P.jumpBuffer = inp.jump ? .13 : Math.max(0, (P.jumpBuffer || 0) - dt); P.coyote = P.onGround ? .1 : Math.max(0, (P.coyote || 0) - dt);
   if (P.jumpBuffer > 0 && P.coyote > 0 && P.stun <= 0) { P.vy = onBoard ? 11.5 : 10.5; P.onGround = false; P.jumpBuffer = P.coyote = 0; k.once('jump', .08); juice(.06, 0); sfx.yip(); }
-  const accel = P.onGround ? (onBoard ? 12 : 22) : 9;
-  P.vx = U.damp(P.vx || 0, MOVE.x * max, accel, dt); P.vz = U.damp(P.vz || 0, MOVE.y * max, accel, dt);
-  if (!mag && P.onGround) P.vx = P.vz = 0;
+  const accel = P.onGround ? (onBoard ? 12 : mag ? 22 : 30) : 9;   // releasing the stick brakes over ~0.1 s (≈0.5 m from full speed) instead of freezing mid-stride
+  P.vx = U.damp(P.vx || 0, MOVE.x * max * align, accel, dt); P.vz = U.damp(P.vz || 0, MOVE.y * max * align, accel, dt);
+  if (!mag && P.onGround && (onBoard || Math.hypot(P.vx, P.vz) < .5)) P.vx = P.vz = 0;
   if (Math.hypot(P.vx, P.vz) < .04) P.vx = P.vz = 0;
   const ox = P.x, oz = P.z;
   W.move(P, P.vx * dt, P.vz * dt, .7, P.y, { grounded: P.onGround });
@@ -250,9 +272,10 @@ function updatePlayer(dt) {
   // animation
   k.root.position.set(P.x, P.y, P.z); k.root.rotation.y = P.heading; k.board.visible = onBoard;
   P.barkT = Math.max(0, (P.barkT || 0) - dt); P.poseT = Math.max(0, (P.poseT || 0) - dt);
+  P.gait = U.damp(P.gait || 0, P.speed, P.speed < (P.gait || 0) ? 26 : 18, dt);   // measured speed, de-noised so wall scrapes and step-ups do not jolt the cadence; drops faster so legs settle with the body
   if (P.poseT > 0) k.play('sit', .08);
   else if (P.barkT <= 0 && (k.curName !== 'jump' || P.onGround)) {
-    if (onBoard) k.play('idle', .2); else if (P.speed < .6) k.play('idle', .25); else if (P.speed < 6) k.play('trot', .2, Math.max(.6, P.speed / 5)); else k.play('run', .15, P.speed / 17);
+    if (onBoard) k.play('idle', .2); else playGait(k, P.gait, !mag);
   }
   if (k.tongue) k.tongue.visible = P.mode !== 'hug';   // happy pant, always
   const blink = P.inv > 0 && Math.floor(g.time * 12) % 2 === 0; k.root.visible = !blink || P.inv > 2.2;
