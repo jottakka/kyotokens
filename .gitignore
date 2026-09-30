@@ -1,0 +1,33 @@
+# --- OS junk ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# --- Editor / IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.code-workspace
+
+# --- Dependency dirs (no build step, but stray installs happen) ---
+node_modules/
+bower_components/
+vendor/
+
+# --- Scratch / backups / logs ---
+*.bak
+*.orig
+*.tmp
+*.temp
+*.log
+*.out
+npm-debug.log*
+yarn-error.log*
+.cache/
+tmp/
