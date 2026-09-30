@@ -186,7 +186,6 @@ K.dress = function (scene) {
       scene.add(mesh); stats.drawCalls++;
     }
   } catch (e) { console.warn('K.dress: street dressing failed', e); }
-  console.log('K.dressStats', stats);
 };
 } catch (e) { console.warn('K.dress: initialization failed', e); }
 })(window.K);

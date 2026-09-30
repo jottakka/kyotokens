@@ -12,6 +12,14 @@
 | cobble.jpg | cobblestone_01 | https://polyhaven.com/a/cobblestone_01 |
 | sand.jpg | coast_sand_01 | https://polyhaven.com/a/coast_sand_01 |
 | bark.jpg | bark_brown_02 | https://polyhaven.com/a/bark_brown_02 |
-| water_normal.jpg | (procedural, generated locally) | — |
 
-Processed: resized to 512x512, saturation x1.35, posterized to 5 bits/channel. Originals in tex/assets/src/.
+Processed: resized to 512x512, saturation x1.35, posterized to 5 bits/channel.
+
+The ten textures above are the files the game loads at runtime, at `tex/assets/<name>.jpg`.
+
+`tex/assets/make_assets.py` is a standalone generator that produces all ten procedurally (512x512,
+JPEG q80) and needs no inputs; it is kept only as a record of how the shipped files were prepared.
+
+`tex/assets/src/` holds the unmodified 1K Poly Haven source images, named after their Poly Haven
+asset (`red_brick_03` -> `red_brick_03_1k.jpg`). They are not loaded by the game and exist only as
+provenance for the processed textures.
