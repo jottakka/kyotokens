@@ -508,6 +508,7 @@ function updateInteract(dt) {
   if (P.interactT > 0) { UI.prompt(null); return; }
   if (P.mode !== 'walk' || P.ext) { UI.prompt(P.mode === 'cable' ? 'E · hop off' : (A.boss.riding ? 'SPACE · hop off · E after 1.5s' : null)); return; }
   if (K.boss && K.boss.canRide()) { UI.prompt('E · hop on the Vespa'); if (inp.act) K.boss.tryRide(); return; }
+  if (K.campaign && K.campaign.interact()) return;
   const ph = photoSpot(); if (ph) { UI.prompt(ph.hold > .08 ? 'HOLD STILL… SAY CHEESE!' : 'E · SNAP A PHOTO'); if (inp.act) snapPhoto(ph); return; }
   let car = null, cd = 7; for (const c of A.cars) { if (c.kind !== 'waymo' || c.mode === 'driven') continue; const d = Math.hypot(c.x - P.x, c.z - P.z); if (d < cd && P.onGround && Math.abs(P.y - c.bot) < 1.8 && W.los(P.x, P.z, c.x, c.z)) { cd = d; car = c; } }
   if (car) { UI.prompt('E · hail this Waymo'); if (inp.act) enterCar(car); return; }
@@ -876,6 +877,7 @@ function tick(now) {
 
 /* ================= BOOT ================= */
 const LIST = [['missionrock', 'models/missionrock.json'], ['kyoto', 'models/kyoto.json'], ['human', 'models/human.json'], ['ui3d', 'models/ui3d.json'], ['buildings', 'models/buildings.json'], ['landmarks', 'models/landmarks.json'], ['vehicles', 'models/vehicles.json'], ['props', 'models/props.json'], ['props2', 'models/props2.json'], ['animals', 'models/animals.json'], ['pascal', 'models/pascal.json']]
+  .concat([['campaign_icon', 'art/campaign/kyoto-icon.png'], ['campaign_desk', 'art/campaign/kyoto-desk.png'], ['flypod_logo', 'art/campaign/flypod-logo.svg']])
   .concat(['bb_tokens', 'bb_hire', 'bb_gooddog', 'bb_agents', 'bb_agi', 'bb_mcp', 'mag_forbarks', 'mag_wagged', 'mag_treat', 'mag_lederhosen', 'mural_mission1', 'mural_mission2', 'mural_mission3', 'mural_tech', 'mural_fog', 'arcade_sign'].map(n => [n, 'tex/' + n + '.jpg'])).map(([k, u]) => [k, u + '?v=' + (K.VER || '1')]);
 /* Yield so the browser can paint the latest status before the next blocking step (timeout fallback: rAF pauses in hidden tabs). */
 const paint = () => new Promise(r => { let d = 0; const go = () => { if (!d) { d = 1; setTimeout(r, 0); } }; requestAnimationFrame(go); setTimeout(go, 120); });
