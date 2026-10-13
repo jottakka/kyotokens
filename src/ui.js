@@ -263,9 +263,11 @@ function showBanner(item) {
   b.querySelector('.big').textContent = item.big; const small = b.querySelector('.small'); small.textContent = item.small; small.hidden = !item.small;
   b.className = item.cls; b.hidden = false; void b.offsetWidth; b.classList.add('show');
 }
-UI.banner = function (big, small = '', cls = '') {
+UI.banner = function (big, small = '', cls = '', group = '') {
   if (!hud.banner || bannerActive && bannerActive.big === big && bannerActive.small === small || bannerQueue.some(b => b.big === big && b.small === small)) return;
-  const item = {big, small, cls}; if (!bannerActive) showBanner(item); else bannerQueue.push(item);
+  const item = {big, small, cls, group};
+  if (group) for (let i=bannerQueue.length-1;i>=0;i--) if (bannerQueue[i].group===group) bannerQueue.splice(i,1);
+  if (!bannerActive || group && bannerActive.group===group) showBanner(item); else bannerQueue.push(item);
 };
 UI.updateBanner = function (dt) {
   if (!bannerActive || !K.game || K.game.state !== 'play') return;
@@ -415,6 +417,14 @@ UI.minimap = function () {
     g.save(); g.translate(sx, sy); g.globalAlpha = edge ? .85 : 1; g.fillStyle = '#241634'; rr(-12, -9, 24, 18, 5); rr(-5, -12, 10, 5, 2); g.fillStyle = '#ff4fa3'; rr(-9.5, -6.5, 19, 13, 3); g.fillStyle = '#fff'; g.beginPath(); g.arc(0, .5, 4.4, 0, 7); g.fill(); g.fillStyle = '#29d3c8'; g.beginPath(); g.arc(0, .5, 2.6, 0, 7); g.fill(); g.restore(); };
   let nearest = null, nd = Infinity; for (const s of K.A.photos || []) { if (s.got) continue; const d = Math.hypot(s.x - P.x, s.z - P.z); if (d < nd) { nd = d; nearest = s; } cam(s.x, s.z, false); }
   if (nearest) cam(nearest.x, nearest.z, true);
+  if (K.campaign) {
+    for (const j of K.campaign.jobs) if (!K.campaign.collected.has(j)) icon(j.x,j.z,'F','#b7f84a');
+    for (const q of K.campaign.kiosks) icon(q.x,q.z,'D','#8aa1a8');
+    const queue=K.campaign.jobs.filter(j=>K.campaign.collected.has(j)&&!K.campaign.deployed.has(j));
+    const targets=queue.length?K.campaign.kiosks:K.campaign.jobs.filter(j=>!K.campaign.collected.has(j));
+    const next=targets.slice().sort((a,b)=>Math.hypot(a.x-P.x,a.z-P.z)-Math.hypot(b.x-P.x,b.z-P.z))[0];
+    if(next){let [x,y]=to(next.x,next.z);const d=Math.hypot(x-R,y-R);if(d>R-17){x=R+(x-R)/d*(R-17);y=R+(y-R)/d*(R-17);}g.save();g.strokeStyle='#b7f84a';g.lineWidth=3;g.setLineDash([5,5]);g.beginPath();g.moveTo(R,R);g.lineTo(x,y);g.stroke();g.restore();icon(next.x,next.z,queue.length?'D':'F','#b7f84a',true);}
+  }
   K.A.agents.forEach(a => dot(a.pos.x, a.pos.z, 3.5, a.hacked ? '#29d3c8' : '#ff5a4e'));
   K.A.letters.forEach(l => { if (!l.got) dot(l.x, l.z, 9, '#ffcf3f', true, l.ch); });
   const pz = K.A.pascal; dot(pz.x, pz.z, 8, '#ff7a3d', true, 'P');
@@ -423,13 +433,13 @@ UI.minimap = function () {
 
 /* ---------- full San Francisco map (L or tap the minimap) ---------- */
 const LM_ICONS = { ggb_tower: ['🌉', 'Golden Gate'], alcatraz_cellhouse: ['🏝️', 'Alcatraz'], coit: ['🗼', 'Coit Tower'], transamerica: ['🔺', 'Transamerica'], ferry: ['⛴️', 'Ferry Bldg'], palace: ['🏛️', 'Palace of Fine Arts'],
-  painted: ['🏠', 'Painted Ladies'], chinagate: ['🏮', 'Chinatown'], salesforce: ['🏙️', 'Salesforce'], oracle_glove: ['⚾', 'Oracle Park'], windmill: ['🌷', 'Windmill'], sutro: ['📡', 'Sutro Tower'], conservatory: ['🌿', 'Conservatory'], lighthouse: ['🚨', 'Lighthouse'] };
+  painted: ['🏠', 'Painted Ladies'], chinagate: ['🏮', 'Chinatown'], salesforce: ['🏙️', 'Salesforce'], oracle_glove: ['⚾', 'Oracle Park'], windmill: ['🌷', 'Windmill'], sutro: ['📡', 'Sutro Tower'], conservatory: ['🌿', 'Conservatory'], lighthouse: ['🚨', 'Lighthouse'], japantown: ['🌸', 'Japantown'] };
 UI.bigMap = function (on) {
   let el = document.getElementById('bigmap');
   if (!on) { if (el) el.hidden = true; UI.mapOpen = false; return; }
   if (!el) {
     el = document.createElement('div'); el.id = 'bigmap'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'San Francisco map'); el.setAttribute('aria-modal', 'true');
-    el.innerHTML = '<div class="bm-card"><div class="bm-title">SAN FRANCISCO</div><canvas width="1100" height="900"></canvas><div class="bm-legend"><span class="k">●</span> Kyoto <span class="p">●</span> Pascal <span class="l">●</span> letters <span class="c">●</span> photos <span class="w">●</span> Waymo</div><button class="bm-close" aria-label="Close map">✕</button></div>';
+    el.innerHTML = '<div class="bm-card"><div class="bm-title">SAN FRANCISCO</div><canvas width="1100" height="900"></canvas><div class="bm-legend"><span class="k">●</span> Kyoto <span class="p">●</span> Pascal <span class="l">●</span> letters <span class="c">●</span> photos <span class="w">●</span> Waymo <span style="color:#68a500">F</span> folder <span style="color:#586d77">D</span> deploy</div><button class="bm-close" aria-label="Close map">✕</button></div>';
     const st = document.createElement('style'); st.textContent = `#bigmap{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(20,12,34,.55);backdrop-filter:blur(3px)}
 #bigmap[hidden]{display:none}.bm-card{position:relative;background:#fff4dc;border:5px solid #241634;border-radius:22px;box-shadow:0 10px 0 #241634,0 24px 60px rgba(0,0,0,.45);box-sizing:border-box;padding:14px;max-width:min(94vw,1100px);max-height:92vh;display:flex;flex-direction:column;align-items:center;transform:rotate(-.6deg)}
 .bm-card canvas{width:100%;height:auto;max-height:calc(92vh - 110px);object-fit:contain;border-radius:14px;border:4px solid #241634;background:#2f7fa0}
@@ -451,13 +461,23 @@ UI.bigMap = function (on) {
     if (label) { g.fillStyle = '#241634'; g.font = `bold ${Math.round(r * 1.25)}px Bangers, Impact, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, sx, sy + 1); } };
   g.textAlign = 'center'; g.textBaseline = 'middle';
   for (const k in LM_ICONS) { const l = W.landmark && W.landmark[k]; if (!l || !l.o) continue; const p = l.o.getWorldPosition(new T.Vector3()); const [sx, sy] = to(p.x, p.z);
-    g.font = `${26 * dpr}px system-ui, "Apple Color Emoji", sans-serif`; g.fillText(LM_ICONS[k][0], sx, sy); g.font = `bold ${12 * dpr}px system-ui, sans-serif`; g.lineWidth = 4 * dpr; g.strokeStyle = '#fff4dc'; if (cssW >= 500) g.strokeText(LM_ICONS[k][1], sx, sy + 21 * dpr); g.fillStyle = '#241634'; if (cssW >= 500) g.fillText(LM_ICONS[k][1], sx, sy + 21 * dpr); }
+    g.font = `${26 * dpr}px system-ui, "Apple Color Emoji", sans-serif`; g.fillText(LM_ICONS[k][0], sx, sy); g.font = `bold ${12 * dpr}px system-ui, sans-serif`; g.lineWidth = 4 * dpr; g.strokeStyle = '#fff4dc'; if (cssW >= 500) g.strokeText(LM_ICONS[k][1], k==='japantown'?sx-35*dpr:sx, sy + (k==='japantown'?30:21) * dpr); g.fillStyle = '#241634'; if (cssW >= 500) g.fillText(LM_ICONS[k][1], k==='japantown'?sx-35*dpr:sx, sy + (k==='japantown'?30:21) * dpr); }
   { const [hx, hy] = to(W.HOME.x, W.HOME.z); g.font = `${26 * dpr}px system-ui, "Apple Color Emoji"`; g.fillText('🏡', hx, hy); }
   K.A.cars.forEach(c => { if (c.kind === 'waymo') pin(c.x, c.z, 4, '#e8edf5'); });
   for (const p of K.A.photos || []) if (!p.got) pin(p.x, p.z, 7, '#ff4fa3');
   K.A.letters.forEach(l => { if (!l.got) pin(l.x, l.z, 11, '#ffcf3f', l.ch); });
   const pz = K.A.pascal; pin(pz.x, pz.z, 12, '#ff7a3d', 'P');
-  const P = K.A.player; pin(P.x, P.z, 14, '#ffb020', 'K');
+  const P = K.A.player;
+  if (K.campaign) {
+    const queue=K.campaign.jobs.filter(j=>K.campaign.collected.has(j)&&!K.campaign.deployed.has(j));
+    const targets=queue.length?K.campaign.kiosks:K.campaign.jobs.filter(j=>!K.campaign.collected.has(j));
+    const next=targets.slice().sort((a,b)=>Math.hypot(a.x-P.x,a.z-P.z)-Math.hypot(b.x-P.x,b.z-P.z))[0];
+    if(next){const [x,y]=to(P.x,P.z),[tx,ty]=to(next.x,next.z);g.save();g.strokeStyle='#50631d';g.lineWidth=3*dpr;g.setLineDash([6*dpr,4*dpr]);g.beginPath();g.moveTo(x,y);g.lineTo(tx,ty);g.stroke();g.restore();}
+    for (const j of K.campaign.jobs) if (!K.campaign.collected.has(j)) pin(j.x,j.z,9,'#b7f84a','F');
+    // Deploy diamonds sit beside the location instead of hiding under Kyoto/letter circles.
+    for (const q of K.campaign.kiosks) { const [x,y]=to(q.x,q.z);g.save();g.translate(x+17*dpr,y-15*dpr);g.fillStyle='#8aa1a8';g.strokeStyle='#241634';g.lineWidth=3*dpr;g.beginPath();g.moveTo(0,-12*dpr);g.lineTo(12*dpr,0);g.lineTo(0,12*dpr);g.lineTo(-12*dpr,0);g.closePath();g.fill();g.stroke();g.fillStyle='#241634';g.font=`bold ${14*dpr}px sans-serif`;g.textAlign='center';g.fillText('D',0,1);g.restore();}
+  }
+  pin(P.x,P.z,14,'#ffb020','K');
   // compass
   g.save(); g.translate(CW - 50 * dpr, 50 * dpr); g.scale(dpr * .8, dpr * .8); g.fillStyle = '#fff4dc'; g.strokeStyle = '#241634'; g.lineWidth = 4; g.beginPath(); g.arc(0, 0, 36, 0, 7); g.fill(); g.stroke(); g.fillStyle = '#ff4fa3'; g.beginPath(); g.moveTo(0, -28); g.lineTo(10, 4); g.lineTo(-10, 4); g.closePath(); g.fill(); g.fillStyle = '#241634'; g.font = 'bold 16px Bangers, Impact'; g.fillText('N', 0, 16); g.restore();
 };

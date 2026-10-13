@@ -1,6 +1,6 @@
 # Kyoto(kens) — Pacing the Frontier
 
-<p align="center"><img src="art/kyotokens-cover.png" alt="Kyoto(kens) game cover" width="360"></p>
+<p align="center"><img src="art/kyotokens-agent-cover.png" alt="Kyoto(kens) game cover" width="360"></p>
 
 A static, single-page Three.js browser game. You play Kyoto, a golden retriever let loose on a
 stylized San Francisco: collect the **K Y O T O** letters, bark at agents, hack drones, chase the
@@ -50,6 +50,37 @@ Append `?mute=1` to start with all audio muted (handy for automated checks):
 | Click | Start the run; click prompts to act |
 
 On touch devices a virtual stick, jump/bark buttons, and an action bar appear automatically.
+
+## Kyoto Agent city update
+
+Kyoto starts in a dark purple hoodie with the violet code emblem. Kyoto Agent ads use the
+supplied icon and desk portrait separately. Oracle Park has a hero billboard and wall flyers;
+a few more ads appear around the city. Japantown includes a Peace Pagoda, cherry trees,
+shops, and a bronze Kyoto memorial thanking him for helping San Francisco against Godzilla.
+
+**Flypod Fetch:** find five lime project folders, press `E` to fetch them, then bring them to
+one of the friendly Flypod bots in Japantown or near Oracle Park and press `E` to deploy. Open the
+map with `L` or tap the objective card: `F` marks folders and `D` marks deploy bots.
+Completed projects earn 6,500 tokens in total. The savings are a fictional game score;
+the quest makes no external deployments or claims about real hosting costs. A new run resets it.
+
+Brand references: [Flypod docs](https://docs.flypod.dev/), [Flypod](https://flypod.dev/),
+[Kyoto Agent](https://kyotoagent.dev/). The Flypod mark is the official favicon SVG, with
+charcoal `#0b0f12`, lime `#b7f84a`, and ivory `#f2f4f7` from the live site stylesheet.
+The two Kyoto reference images remain unchanged in `art/campaign/`.
+
+**Kyoto Vision:** press `V` or click the eye button to switch the 3D world to a blue/yellow
+approximation of dog colour vision. The preference persists between visits; the HTML HUD
+retains its normal colours for readability. This is an artistic approximation, not a precise
+simulation of canine perception. Sound, song and pause now have labelled icons and focus feedback.
+
+The cover in `art/kyotokens-agent-cover.png` was edited with the built-in image generator.
+The exact edit prompt is saved in `art/campaign/cover-prompt.txt`; the original cover remains intact.
+The new cover includes navigation, the bot destination, Ecuador badge and German sleeve patch.
+
+Local review scenes: `?scene=agenthoodie&mute=1`, `?scene=japantown&mute=1`,
+`?scene=campaignstadium&mute=1`, and `?scene=flypodcheck&mute=1`.
+The last scene checks collection distance, all five rewards, duplicate deployment, and restart.
 
 ## Folder map
 
