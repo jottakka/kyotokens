@@ -111,10 +111,11 @@ The cover sleeve has a sewn ribbed cuff with the foreleg exposed below it.
 
 ## Current release status
 
-This version is published as-is at the user's request. The current hoodie clipping repair
-received 4/5 from an independent Opus 5.5 High review; the remaining request was an
-old-versus-new comparison of the exposed bandana above the neckline. This release is
-not a claim of a perfect or fully approved DLC.
+The hoodie was rebuilt through Opus 5.5 Medium repair and independent review. It has
+fitted sleeves with rib cuffs, a curved sternum and belly hem, a folded shoulder hood,
+and drawstrings seated against the chest. The final independent review approved it
+at 4/5; minor cuff shading remains from some angles. This release is published as-is
+at the user's request and is not a claim that the entire DLC has been visually accepted.
 
 The accepted fast movement and dog rig remain unchanged. Original body geometry is
 retained; a projected opaque-clothing stencil hides covered fur while preserving
