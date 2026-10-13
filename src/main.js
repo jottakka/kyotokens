@@ -223,6 +223,35 @@ function playGait(k, s, braking) {
   // trot↔run: carry the stride phase across (front-left touchdown sits half a cycle apart in the two clips)
   if (prev && k.cur !== prev && (was === 'trot' || was === 'run')) k.cur.time = ((prev.time / prev.getClip().duration + .5) % 1) * k.cur.getClip().duration;
 }
+// A gait clip that is still running while it fades out keeps the stride rate of the body's measured speed, so a braking stop settles the legs instead of galloping in place.
+function brakeOutgoing(k, s) {
+  for (const n of ['run', 'trot']) { const a = k.actions[n]; if (a && a !== k.cur && a.isRunning()) a.timeScale = Math.min(a.timeScale, cadence(s) * a.getClip().duration); }
+}
+// Jump pose follows the body, not the clock. Measured jump-clip phases (paw_series.py): crouch 0, paws leave the floor ≈.10,
+// full tuck .25–.33, front paws reach the floor ≈.62, hind paws ≈.95. Airborne: rising maps vy0→0 onto .10→.29, falling holds the tuck,
+// and the last .32 s before the predicted touchdown extends to .60. Touchdown releases the clip so the hind paws come down during the gait fade.
+const JUMP = { lift: .10, apex: .29, hold: .36, reach: .60, lead: .32 };
+function driveJump(k, dt, h) {
+  const a = k.actions.jump; if (!a) return;
+  if (k.curName !== 'jump') {   // airborne without a jump (ledge drop, sea-lion bounce, bark ending mid-air): fade into the tuck
+    if (!(P.vy < -4 || P.vy > 4)) return;
+    launchJump(k, .15); P.airVy0 = Math.max(P.vy, 8); a.time = a.getClip().duration * (P.vy > 0 ? JUMP.lift : JUMP.hold);
+  }
+  if (P.vy > (P.airVy0 || 0)) P.airVy0 = P.vy;   // a fresh launch or bounce re-arms the rise
+  const vy0 = Math.max(P.airVy0 || 0, 8), tLand = (P.vy + Math.sqrt(Math.max(0, P.vy * P.vy + 54 * Math.max(0, h)))) / 27;
+  let p = P.vy > 0 ? U.lerp(JUMP.apex, JUMP.lift, U.clamp(P.vy / vy0, 0, 1)) : U.lerp(JUMP.apex, JUMP.hold, U.clamp(-P.vy / vy0, 0, 1));
+  if (P.vy <= 0) { const e = U.clamp(1 - tLand / JUMP.lead, 0, 1); p = U.lerp(p, JUMP.reach, e * e * (3 - 2 * e)); }
+  const dur = a.getClip().duration; k.jumpDriven = true; a.paused = true; a.time = U.damp(a.time, p * dur, 24, dt);
+}
+// jumpDriven marks the freeze as ours, so the LoopOnce clamp at the clip's end is never mistaken for it (no per-frame un-pause / re-finish).
+function landJump(k) {
+  const a = k.actions.jump; if (!a || !k.jumpDriven) return;
+  k.jumpDriven = false; a.paused = false; a.timeScale = 1.6; P.airVy0 = 0;   // play the hind-paw touchdown (.60→1) while the gait fades in
+}
+// every jump starts at clip speed with no rise left over from an earlier launch or bounce
+function launchJump(k, fade) {
+  k.once('jump', fade); k.jumpDriven = false; P.airVy0 = 0; if (k.actions.jump) k.actions.jump.timeScale = 1;
+}
 
 function updatePlayer(dt) {
   for (const k in g.buffs) if (g.buffs[k] > 0) g.buffs[k] = Math.max(0, g.buffs[k] - dt);
@@ -253,7 +282,7 @@ function updatePlayer(dt) {
     }
   }
   P.jumpBuffer = inp.jump ? .13 : Math.max(0, (P.jumpBuffer || 0) - dt); P.coyote = P.onGround ? .1 : Math.max(0, (P.coyote || 0) - dt);
-  if (P.jumpBuffer > 0 && P.coyote > 0 && P.stun <= 0) { P.vy = onBoard ? 11.5 : 10.5; P.onGround = false; P.jumpBuffer = P.coyote = 0; k.once('jump', .08); juice(.06, 0); sfx.yip(); }
+  if (P.jumpBuffer > 0 && P.coyote > 0 && P.stun <= 0) { P.vy = onBoard ? 11.5 : 10.5; P.onGround = false; P.jumpBuffer = P.coyote = 0; launchJump(k, .08); juice(.06, 0); sfx.yip(); }
   const accel = P.onGround ? (onBoard ? 12 : mag ? 22 : 30) : 9;   // releasing the stick brakes over ~0.1 s (≈0.5 m from full speed) instead of freezing mid-stride
   P.vx = U.damp(P.vx || 0, MOVE.x * max * align, accel, dt); P.vz = U.damp(P.vz || 0, MOVE.y * max * align, accel, dt);
   if (!mag && P.onGround && (onBoard || Math.hypot(P.vx, P.vz) < .5)) P.vx = P.vz = 0;
@@ -274,9 +303,14 @@ function updatePlayer(dt) {
   P.barkT = Math.max(0, (P.barkT || 0) - dt); P.poseT = Math.max(0, (P.poseT || 0) - dt);
   P.gait = U.damp(P.gait || 0, P.speed, P.speed < (P.gait || 0) ? 26 : 18, dt);   // measured speed, de-noised so wall scrapes and step-ups do not jolt the cadence; drops faster so legs settle with the body
   if (P.poseT > 0) k.play('sit', .08);
-  else if (P.barkT <= 0 && (k.curName !== 'jump' || P.onGround)) {
+  else if (P.barkT <= 0 && !P.onGround && onBoard && k.curName !== 'jump') k.play('idle', .2);   // board ledge drop keeps the riding stance
+  else if (P.barkT <= 0 && !P.onGround) driveJump(k, dt, P.y - gr);
+  else if (P.barkT <= 0) {
+    landJump(k);
     if (onBoard) k.play('idle', .2); else playGait(k, P.gait, !mag);
   }
+  if (k.curName !== 'jump') landJump(k);   // anything that took over mid-air (bark, sit) never leaves the jump frozen
+  brakeOutgoing(k, P.gait);
   if (k.tongue) k.tongue.visible = P.mode !== 'hug';   // happy pant, always
   const blink = P.inv > 0 && Math.floor(g.time * 12) % 2 === 0; k.root.visible = !blink || P.inv > 2.2;
   k.mixer.update(dt);
@@ -508,6 +542,7 @@ function updateInteract(dt) {
   if (P.interactT > 0) { UI.prompt(null); return; }
   if (P.mode !== 'walk' || P.ext) { UI.prompt(P.mode === 'cable' ? 'E · hop off' : (A.boss.riding ? 'SPACE · hop off · E after 1.5s' : null)); return; }
   if (K.boss && K.boss.canRide()) { UI.prompt('E · hop on the Vespa'); if (inp.act) K.boss.tryRide(); return; }
+  if (K.campaign && K.campaign.interact()) return;
   const ph = photoSpot(); if (ph) { UI.prompt(ph.hold > .08 ? 'HOLD STILL… SAY CHEESE!' : 'E · SNAP A PHOTO'); if (inp.act) snapPhoto(ph); return; }
   let car = null, cd = 7; for (const c of A.cars) { if (c.kind !== 'waymo' || c.mode === 'driven') continue; const d = Math.hypot(c.x - P.x, c.z - P.z); if (d < cd && P.onGround && Math.abs(P.y - c.bot) < 1.8 && W.los(P.x, P.z, c.x, c.z)) { cd = d; car = c; } }
   if (car) { UI.prompt('E · hail this Waymo'); if (inp.act) enterCar(car); return; }
@@ -876,6 +911,7 @@ function tick(now) {
 
 /* ================= BOOT ================= */
 const LIST = [['missionrock', 'models/missionrock.json'], ['kyoto', 'models/kyoto.json'], ['human', 'models/human.json'], ['ui3d', 'models/ui3d.json'], ['buildings', 'models/buildings.json'], ['landmarks', 'models/landmarks.json'], ['vehicles', 'models/vehicles.json'], ['props', 'models/props.json'], ['props2', 'models/props2.json'], ['animals', 'models/animals.json'], ['pascal', 'models/pascal.json']]
+  .concat([['campaign_icon', 'art/campaign/kyoto-icon.png'], ['campaign_desk', 'art/campaign/kyoto-desk.png'], ['flypod_logo', 'art/campaign/flypod-logo.svg']])
   .concat(['bb_tokens', 'bb_hire', 'bb_gooddog', 'bb_agents', 'bb_agi', 'bb_mcp', 'mag_forbarks', 'mag_wagged', 'mag_treat', 'mag_lederhosen', 'mural_mission1', 'mural_mission2', 'mural_mission3', 'mural_tech', 'mural_fog', 'arcade_sign'].map(n => [n, 'tex/' + n + '.jpg'])).map(([k, u]) => [k, u + '?v=' + (K.VER || '1')]);
 /* Yield so the browser can paint the latest status before the next blocking step (timeout fallback: rAF pauses in hidden tabs). */
 const paint = () => new Promise(r => { let d = 0; const go = () => { if (!d) { d = 1; setTimeout(r, 0); } }; requestAnimationFrame(go); setTimeout(go, 120); });

@@ -251,7 +251,7 @@ UI.photoImage = function (img, s) {
 };
 UI.albumOpen = false;
 UI.album = function (on) {
-  const el = $('#album'); UI.albumOpen = !!on; el.hidden = !on; $('#albZoom').hidden = true; if (!on) return;
+  const el = $('#album'); UI.albumOpen = !!on; $('#hud').classList.toggle('photos-open', !!on); el.hidden = !on; $('#albZoom').hidden = true; if (!on) return;
   const list = K.A.photos; $('#albCount').textContent = list.filter(s => s.got).length + '/' + list.length;
   $('#albGrid').innerHTML = list.map((s, i) => { const r = `style="--r:${((i * 7) % 5 - 2) * 1.6}deg"`; return s.got ? `<button type="button" class="ac got" data-i="${i}" ${r}><img alt="${s.label}"><span>${s.label}</span></button>` : `<div class="ac" ${r}><i></i><span>${s.label}</span></div>`; }).join('');
   $('#albGrid').querySelectorAll('.got').forEach(c => UI.photoImage(c.querySelector('img'), list[+c.dataset.i]));
@@ -263,9 +263,11 @@ function showBanner(item) {
   b.querySelector('.big').textContent = item.big; const small = b.querySelector('.small'); small.textContent = item.small; small.hidden = !item.small;
   b.className = item.cls; b.hidden = false; void b.offsetWidth; b.classList.add('show');
 }
-UI.banner = function (big, small = '', cls = '') {
+UI.banner = function (big, small = '', cls = '', group = '') {
   if (!hud.banner || bannerActive && bannerActive.big === big && bannerActive.small === small || bannerQueue.some(b => b.big === big && b.small === small)) return;
-  const item = {big, small, cls}; if (!bannerActive) showBanner(item); else bannerQueue.push(item);
+  const item = {big, small, cls, group};
+  if (group) for (let i=bannerQueue.length-1;i>=0;i--) if (bannerQueue[i].group===group) bannerQueue.splice(i,1);
+  if (!bannerActive || group && bannerActive.group===group) showBanner(item); else bannerQueue.push(item);
 };
 UI.updateBanner = function (dt) {
   if (!bannerActive || !K.game || K.game.state !== 'play') return;
@@ -296,7 +298,7 @@ UI.resolvePrompt = function () {
   if (text !== promptLast) { promptLast = text; hud.promptT.textContent = text || ''; }
 };
 UI.polGen = 0;
-UI.reset = function () { bannerQueue.length = 0; bannerActive = null; bannerAge = 0; promptOffers.clear(); UI.polGen++; UI.bigMap(false); $('#hud').style.visibility = ''; clearTimeout(bannerTO); clearTimeout(radioTO); ['#banner', '#radio', '#mag', '#pArrow', '#album', '#snapPol'].forEach(id => $(id).hidden = true); UI.albumOpen = false; UI.prompt(null); document.querySelectorAll('.sfx,.floater,.ring,#snapPol .pol').forEach(e => { e.getAnimations && e.getAnimations().forEach(a => a.cancel()); e.remove(); }); if (K.A.tags) K.A.tags.forEach(t => { t.bt = 0; t.b.hidden = true; }); };
+UI.reset = function () { bannerQueue.length = 0; bannerActive = null; bannerAge = 0; promptOffers.clear(); UI.polGen++; UI.bigMap(false); $('#hud').classList.remove('photos-open'); $('#hud').style.visibility = ''; clearTimeout(bannerTO); clearTimeout(radioTO); ['#banner', '#radio', '#mag', '#pArrow', '#album', '#snapPol'].forEach(id => $(id).hidden = true); UI.albumOpen = false; UI.prompt(null); document.querySelectorAll('.sfx,.floater,.ring,#snapPol .pol').forEach(e => { e.getAnimations && e.getAnimations().forEach(a => a.cancel()); e.remove(); }); if (K.A.tags) K.A.tags.forEach(t => { t.bt = 0; t.b.hidden = true; }); };
 UI.setLetter = (i, on) => hud.letters[i].classList.toggle('got', on);
 UI.hudUpdate = function (g) {
   const P = K.A.player; hud.tokens.textContent = U.fmt(g.tokens); hud.ctx.style.width = (U.clamp(g.tokens / 200000, 0, 1) * 100).toFixed(1) + '%';
@@ -344,12 +346,14 @@ UI.buildShortcuts = () => {
   dock.append(shortcutBar, shortcutToggle); $('#hud').appendChild(dock);
   cueLayer = document.createElement('div'); cueLayer.id = 'actionCues'; cueLayer.setAttribute('aria-hidden', 'true'); $('#hud').appendChild(cueLayer);
 };
-function placeBadge(index, x, y, z, key, label, waymo) {
+function placeBadge(index, x, y, z, key, label, waymo, drawn) {
   badgePoint.set(x,y,z); const p = K.A.project(badgePoint);
   if (!p.ok || p.x < 24 || p.x > K.VW - 24 || p.y < 36 || p.y > K.VH - 90) return index;
   // Offered actions already passed gameplay reach gates: keep their badges readable.
   // Distant discovery labels still respect walls (except explicit noClip review cameras).
   if (!key && !(K.sceneCam && K.sceneCam.noClip) && W.clipCamera && W.clipCamera(K.camera.position, badgePoint, .05) < .94) return index;
+  if (drawn && sameActionCueNearby(key,p,drawn)) return index;
+  if (drawn && key) drawn.push({key,x:p.x,y:p.y});
   let b = badgePool[index];
   if (!b) { b = document.createElement('div'); b.innerHTML = '<kbd></kbd><span></span>'; cueLayer.appendChild(b); badgePool.push(b); }
   b.hidden = false; b.className = waymo ? 'world-cue waymo-cue' : 'world-cue';
@@ -370,9 +374,9 @@ UI.updateActionCues = () => {
     const b=shortcuts[i],code=shortcutDefs[i][0], active=!!ready[code.slice(3)];
     b.classList.toggle('ready',active); b.classList.toggle('pressed',!!K.keys[code] || code==='KeyW' && !!(K.inp.mx || K.inp.mz));
   }
-  let used=0;
+  let used=0; const drawnCues=[];
   if (playing) {
-    for (const t of targets) { if (used >= 12) break; used=placeBadge(used,t.x,t.y+t.height,t.z,t.key,t.o.kind === 'waymo' ? 'WAYMO' : t.label,t.o.kind === 'waymo'); }
+    for (const t of targets) { if (used >= 12) break; used=placeBadge(used,t.x,t.y+t.height,t.z,t.key,t.o.kind === 'waymo' ? 'WAYMO' : t.label,t.o.kind === 'waymo',drawnCues); }
     const P=K.A.player;
     let count=0;
     for (const c of K.A.cars) if (c.kind==='waymo' && c.mode!=='driven' && Math.hypot(c.x-P.x,c.z-P.z)<45 && count<4) {
@@ -380,6 +384,7 @@ UI.updateActionCues = () => {
       used=placeBadge(used,c.x,(c.bot||0)+3.05,c.z,'','WAYMO',true); count++;
     }
   }
+  UI.actionCueLayout={drawn:drawnCues,sameKeyMergeRadiusCSS:40};
   for(let i=used;i<badgePool.length;i++)badgePool[i].hidden=true;
 };
 K.on('frame', UI.updateActionCues);
@@ -415,6 +420,14 @@ UI.minimap = function () {
     g.save(); g.translate(sx, sy); g.globalAlpha = edge ? .85 : 1; g.fillStyle = '#241634'; rr(-12, -9, 24, 18, 5); rr(-5, -12, 10, 5, 2); g.fillStyle = '#ff4fa3'; rr(-9.5, -6.5, 19, 13, 3); g.fillStyle = '#fff'; g.beginPath(); g.arc(0, .5, 4.4, 0, 7); g.fill(); g.fillStyle = '#29d3c8'; g.beginPath(); g.arc(0, .5, 2.6, 0, 7); g.fill(); g.restore(); };
   let nearest = null, nd = Infinity; for (const s of K.A.photos || []) { if (s.got) continue; const d = Math.hypot(s.x - P.x, s.z - P.z); if (d < nd) { nd = d; nearest = s; } cam(s.x, s.z, false); }
   if (nearest) cam(nearest.x, nearest.z, true);
+  if (K.campaign) {
+    for (const j of K.campaign.jobs) if (!K.campaign.collected.has(j)) icon(j.x,j.z,'F','#b7f84a');
+    for (const q of K.campaign.kiosks) icon(q.x,q.z,'D','#8aa1a8');
+    const queue=K.campaign.jobs.filter(j=>K.campaign.collected.has(j)&&!K.campaign.deployed.has(j));
+    const targets=K.campaign.carried?K.campaign.pads.filter(p=>p.phase==='idle').map(p=>({x:p.approachWorld[0],z:p.approachWorld[2]})):K.campaign.jobs.filter(j=>j.phase==='available');
+    const next=targets.slice().sort((a,b)=>Math.hypot(a.x-P.x,a.z-P.z)-Math.hypot(b.x-P.x,b.z-P.z))[0];
+    if(next){let [x,y]=to(next.x,next.z);const d=Math.hypot(x-R,y-R);if(d>R-17){x=R+(x-R)/d*(R-17);y=R+(y-R)/d*(R-17);}g.save();g.strokeStyle='#b7f84a';g.lineWidth=3;g.setLineDash([5,5]);g.beginPath();g.moveTo(R,R);g.lineTo(x,y);g.stroke();g.restore();icon(next.x,next.z,queue.length?'D':'F','#b7f84a',true);}
+  }
   K.A.agents.forEach(a => dot(a.pos.x, a.pos.z, 3.5, a.hacked ? '#29d3c8' : '#ff5a4e'));
   K.A.letters.forEach(l => { if (!l.got) dot(l.x, l.z, 9, '#ffcf3f', true, l.ch); });
   const pz = K.A.pascal; dot(pz.x, pz.z, 8, '#ff7a3d', true, 'P');
@@ -423,43 +436,174 @@ UI.minimap = function () {
 
 /* ---------- full San Francisco map (L or tap the minimap) ---------- */
 const LM_ICONS = { ggb_tower: ['🌉', 'Golden Gate'], alcatraz_cellhouse: ['🏝️', 'Alcatraz'], coit: ['🗼', 'Coit Tower'], transamerica: ['🔺', 'Transamerica'], ferry: ['⛴️', 'Ferry Bldg'], palace: ['🏛️', 'Palace of Fine Arts'],
-  painted: ['🏠', 'Painted Ladies'], chinagate: ['🏮', 'Chinatown'], salesforce: ['🏙️', 'Salesforce'], oracle_glove: ['⚾', 'Oracle Park'], windmill: ['🌷', 'Windmill'], sutro: ['📡', 'Sutro Tower'], conservatory: ['🌿', 'Conservatory'], lighthouse: ['🚨', 'Lighthouse'] };
+  painted: ['🏠', 'Painted Ladies'], chinagate: ['🏮', 'Chinatown'], salesforce: ['🏙️', 'Salesforce'], oracle_glove: ['⚾', 'Oracle Park'], windmill: ['🌷', 'Windmill'], sutro: ['📡', 'Sutro Tower'], conservatory: ['🌿', 'Conservatory'], lighthouse: ['🚨', 'Lighthouse'], japantown: ['🌸', 'Japantown'] };
+function mapSegmentsCross(a,b) {
+  const turn=(p,q,r)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);
+  const on=(p,q,r)=>Math.abs(turn(p,q,r))<1e-6&&r[0]>=Math.min(p[0],q[0])-1e-6&&r[0]<=Math.max(p[0],q[0])+1e-6&&r[1]>=Math.min(p[1],q[1])-1e-6&&r[1]<=Math.max(p[1],q[1])+1e-6;
+  const p=a.from,q=a.to,r=b.from,s=b.to,t1=turn(p,q,r),t2=turn(p,q,s),t3=turn(r,s,p),t4=turn(r,s,q);
+  return (t1*t2<0&&t3*t4<0)||on(p,q,r)||on(p,q,s)||on(r,s,p)||on(r,s,q);
+}
+function mapSegmentHitsBox(line,b,pad=0) {
+  const x=b.x-pad,y=b.y-pad,w=b.w+2*pad,h=b.h+2*pad;
+  const inside=p=>p[0]>=x&&p[0]<=x+w&&p[1]>=y&&p[1]<=y+h;
+  return inside(line.from)||inside(line.to)||[[[x,y],[x+w,y]],[[x+w,y],[x+w,y+h]],[[x+w,y+h],[x,y+h]],[[x,y+h],[x,y]]].some(e=>mapSegmentsCross(line,{from:e[0],to:e[1]}));
+}
+function layoutCompactMapNames(labels,obstacles,width,height,dpr,measure,markerLeaders=[]) {
+  const overlaps=(a,b)=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
+  const occupied=obstacles.slice(),leaders=[],placements=[],fallbacks=[],pad=4*dpr;
+  const order=labels.map((l,i)=>({...l,number:i+1,crowding:obstacles.filter(b=>Math.hypot(b.x+b.w/2-l.sx,b.y+b.h/2-l.sy)<60*dpr).length})).sort((a,b)=>b.crowding-a.crowding||a.number-b.number);
+  for(const label of order) {
+    const w=measure(label.text)+8*dpr,h=16*dpr,candidates=[];
+    for(const dy of [18,-18,30,-30,42,-42,0])for(const dx of [0,-16,16,-32,32,-48,48,-64,64]) {
+      const b={x:label.sx+dx*dpr-w/2,y:label.sy+dy*dpr-h/2,w,h,kind:'label'};
+      if(b.x<pad||b.y<pad||b.x+w>width-pad||b.y+h>height-pad||Math.hypot(dx,dy)>65)continue;
+      candidates.push(b);
+    }
+    candidates.sort((a,b)=>Math.hypot(a.x+w/2-label.sx,a.y+h/2-label.sy)-Math.hypot(b.x+w/2-label.sx,b.y+h/2-label.sy));
+    let chosen;
+    for(const box of candidates) {
+      if(occupied.some(o=>overlaps(box,o)))continue;
+      const to=[Math.max(box.x,Math.min(box.x+w,label.sx)),Math.max(box.y,Math.min(box.y+h,label.sy))];
+      const own=obstacles.find(o=>o.kind==='landmark'&&o.id===label.key),from=[label.sx,label.sy];
+      if(own){const dx=to[0]-from[0],dy=to[1]-from[1],scale=Math.max(Math.abs(dx)/(own.w/2+dpr),Math.abs(dy)/(own.h/2+dpr));if(scale>1){from[0]+=dx/scale;from[1]+=dy/scale;}}
+      const line={key:label.key,from,to,lengthCSS:Math.hypot(to[0]-from[0],to[1]-from[1])/dpr};
+      if(line.lengthCSS>48||Math.hypot(to[0]-label.sx,to[1]-label.sy)>48*dpr)continue;
+      if(occupied.some(o=>o!==own&&mapSegmentHitsBox(line,o,dpr)))continue;
+      if([...markerLeaders,...leaders].some(l=>mapSegmentsCross(line,l)||mapSegmentHitsBox(l,box,dpr)))continue;
+      chosen={box,line};break;
+    }
+    if(!chosen){fallbacks.push(label);continue;}
+    occupied.push(chosen.box);if(chosen.line.lengthCSS>1)leaders.push(chosen.line);
+    placements.push({...label,...chosen.box,leaderLengthCSS:chosen.line.lengthCSS});
+  }
+  return {placements,leaders,fallbacks:fallbacks.sort((a,b)=>a.number-b.number),occupied,placementOrder:order.map(l=>l.key),maximumLeaderLengthCSS:Math.max(0,...leaders.map(l=>l.lengthCSS))};
+}
+function sameActionCueNearby(key,point,drawn) {
+  return !!key&&drawn.some(c=>c.key===key&&Math.hypot(c.x-point.x,c.y-point.y)<=40);
+}
+
 UI.bigMap = function (on) {
   let el = document.getElementById('bigmap');
   if (!on) { if (el) el.hidden = true; UI.mapOpen = false; return; }
   if (!el) {
     el = document.createElement('div'); el.id = 'bigmap'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'San Francisco map'); el.setAttribute('aria-modal', 'true');
-    el.innerHTML = '<div class="bm-card"><div class="bm-title">SAN FRANCISCO</div><canvas width="1100" height="900"></canvas><div class="bm-legend"><span class="k">●</span> Kyoto <span class="p">●</span> Pascal <span class="l">●</span> letters <span class="c">●</span> photos <span class="w">●</span> Waymo</div><button class="bm-close" aria-label="Close map">✕</button></div>';
-    const st = document.createElement('style'); st.textContent = `#bigmap{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(20,12,34,.55);backdrop-filter:blur(3px)}
+    el.innerHTML = '<div class="bm-card"><div class="bm-title">SAN FRANCISCO</div><canvas width="1100" height="900"></canvas><div class="bm-legend"><span class="bm-item"><span class="k">➤</span> You (Kyoto)</span><span class="bm-item"><span class="p">●</span> Pascal</span><span class="bm-item"><span class="l">●</span> letters</span><span class="bm-item"><span class="c">●</span> photos</span><span class="bm-item bm-waymo"><span class="w">●</span> Waymo</span><span class="bm-item"><span class="f">F</span> folder</span><span class="bm-item"><span class="d"><i>D</i></span> deploy</span></div><div class="bm-key" aria-label="Numbered landmarks" hidden></div><button class="bm-close" aria-label="Close map">✕</button></div>';
+    const st = document.createElement('style'); st.textContent = `#bigmap{--bm-safe-top:env(safe-area-inset-top,0px);--bm-safe-right:env(safe-area-inset-right,0px);--bm-safe-bottom:env(safe-area-inset-bottom,0px);--bm-safe-left:env(safe-area-inset-left,0px);position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:calc(12px + var(--bm-safe-top)) calc(12px + var(--bm-safe-right)) calc(20px + var(--bm-safe-bottom)) calc(12px + var(--bm-safe-left));background:rgba(20,12,34,.55);backdrop-filter:blur(3px)}
 #bigmap[hidden]{display:none}.bm-card{position:relative;background:#fff4dc;border:5px solid #241634;border-radius:22px;box-shadow:0 10px 0 #241634,0 24px 60px rgba(0,0,0,.45);box-sizing:border-box;padding:14px;max-width:min(94vw,1100px);max-height:92vh;display:flex;flex-direction:column;align-items:center;transform:rotate(-.6deg)}
-.bm-card canvas{width:100%;height:auto;max-height:calc(92vh - 110px);object-fit:contain;border-radius:14px;border:4px solid #241634;background:#2f7fa0}
+.bm-card canvas{width:100%;height:auto;flex-shrink:0;object-fit:contain;border-radius:14px;border:4px solid #241634;background:#2f7fa0}
 .bm-title{font:clamp(23px,5vw,44px) Bangers,Impact,sans-serif;padding-right:54px;box-sizing:border-box;width:100%;min-height:48px;display:flex;align-items:center;justify-content:center;flex-shrink:0;letter-spacing:3px;color:#ff4fa3;-webkit-text-stroke:2px #241634;text-shadow:0 4px 0 #241634;margin:-4px 0 6px}
-.bm-legend{font:bold 15px system-ui,sans-serif;color:#241634;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center}.bm-legend .k{color:#ffb020}.bm-legend .p{color:#ff7a3d}.bm-legend .l{color:#ffcf3f}.bm-legend .c{color:#ff4fa3}.bm-legend .w{color:#9aa4b5}
-.bm-close{position:absolute;top:6px;right:6px;width:48px;height:52px;border-radius:50%;border:4px solid #241634;background:#ff4fa3;color:#fff;font:bold 24px system-ui;box-shadow:0 5px 0 #241634;cursor:pointer}`;
+.bm-legend{flex-shrink:0;font:bold 15px system-ui,sans-serif;color:#241634;margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center}.bm-legend .k{display:inline-grid;place-items:center;width:18px;height:18px;box-sizing:border-box;border:2px solid #fff;border-radius:50%;background:#ffb020;color:#241634;box-shadow:0 0 0 1px #241634;font:900 15px/1 system-ui}.bm-legend .p{color:#ff7a3d}.bm-legend .l{color:#ffcf3f}.bm-legend .c{color:#ff4fa3}.bm-legend .w{color:#e8edf5;-webkit-text-stroke:1px #241634}
+.bm-legend .f,.bm-legend .d{display:inline-grid;place-items:center;width:18px;height:18px;border:2px solid #241634;color:#241634;line-height:1}.bm-legend .f{border-radius:50%;background:#b7f84a}.bm-legend .d{background:#8aa1a8;transform:rotate(45deg);margin:0 3px}.bm-legend .d i{font-style:normal;transform:rotate(-45deg)}
+.bm-legend .bm-item{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.bm-card[data-compact="true"] .bm-waymo{display:none}.bm-key{height:80px;max-height:80px;overflow-y:auto;flex-shrink:0;width:100%;box-sizing:border-box;margin-top:4px;display:flex;align-content:flex-start;justify-content:center;flex-wrap:wrap;gap:2px 10px;font:bold 10px/16px system-ui,sans-serif;color:#241634}.bm-key[hidden]{display:none}.bm-key span{white-space:nowrap}.bm-key b{display:inline-grid;place-items:center;min-width:16px;height:16px;background:#ffcf3f;border-radius:50%;margin-right:3px}
+.bm-close{position:absolute;top:6px;right:6px;width:48px;height:52px;border-radius:50%;border:4px solid #241634;background:#ff4fa3;color:#fff;font:bold 24px system-ui;box-shadow:0 5px 0 #241634;cursor:pointer}
+@media(max-width:500px){.bm-legend{font-size:11px;gap:6px;line-height:18px}.bm-legend .k,.bm-legend .f,.bm-legend .d{width:15px;height:15px}}
+@media(max-height:500px){.bm-key{height:36px;max-height:36px}.bm-card{padding:8px}.bm-title{font-size:24px;min-height:34px;margin:0 0 2px;letter-spacing:2px;-webkit-text-stroke:1px #241634;text-shadow:0 2px 0 #241634;padding-right:48px}.bm-legend{font-size:11px;line-height:18px;gap:6px;margin-top:4px}.bm-legend .k,.bm-legend .f,.bm-legend .d{width:15px;height:15px}.bm-close{width:44px;height:44px;font-size:22px;top:3px;right:3px;box-shadow:0 3px 0 #241634}}`;
     document.head.appendChild(st); document.body.appendChild(el);
     el.querySelector('.bm-close').onclick = () => K.game.mapKey(); el.onclick = e => { if (e.target === el) K.game.mapKey(); };
   }
   el.hidden = false; UI.mapOpen = true;
-  const cv = el.querySelector('canvas'), g = cv.getContext('2d'), M = W.mapCanvas, dpr = Math.min(2, devicePixelRatio || 1);
-  const cssW = Math.max(160, Math.min(innerWidth * .9 - 40, (innerHeight * .92 - 120) * 1.22, 1100)); cv.style.width = cssW + 'px'; cv.style.height = cssW / 1.22 + 'px';
+  const cv = el.querySelector('canvas'), card = el.querySelector('.bm-card'), g = cv.getContext('2d'), M = W.mapCanvas, dpr = Math.min(2, devicePixelRatio || 1);
+  const px = n => parseFloat(n) || 0, overlayStyle = getComputedStyle(el), cardStyle = getComputedStyle(card), canvasStyle = getComputedStyle(cv);
+  const safe = {top:px(overlayStyle.getPropertyValue('--bm-safe-top')),right:px(overlayStyle.getPropertyValue('--bm-safe-right')),bottom:px(overlayStyle.getPropertyValue('--bm-safe-bottom')),left:px(overlayStyle.getPropertyValue('--bm-safe-left'))};
+  const availableW = Math.min(innerWidth * .94, innerWidth - safe.left - safe.right - 24, 1100);
+  const availableH = Math.min(innerHeight * .92, innerHeight - safe.top - safe.bottom - 32);
+  card.style.width = availableW + 'px'; card.style.maxWidth = availableW + 'px'; card.style.maxHeight = availableH + 'px';
+  const insetW = px(cardStyle.paddingLeft) + px(cardStyle.paddingRight) + px(cardStyle.borderLeftWidth) + px(cardStyle.borderRightWidth) + px(canvasStyle.borderLeftWidth) + px(canvasStyle.borderRightWidth);
+  const insetH = px(cardStyle.paddingTop) + px(cardStyle.paddingBottom) + px(cardStyle.borderTopWidth) + px(cardStyle.borderBottomWidth) + px(canvasStyle.borderTopWidth) + px(canvasStyle.borderBottomWidth);
+  let cssW = Math.max(100, availableW - insetW), reservedHeight = 0;
+  // Measure both legend rows and the compact title; do not reserve desktop heading space on short screens.
+  for (let pass = 0; pass < 3; pass++) {
+    card.dataset.compact=String(cssW<500);el.querySelector('.bm-key').hidden=cssW>=500;
+    cv.style.width = cssW + 'px'; cv.style.height = cssW / 1.22 + 'px';
+    const title = el.querySelector('.bm-title'), legend = el.querySelector('.bm-legend'), ts = getComputedStyle(title), ls = getComputedStyle(legend);
+    const keyPanel=el.querySelector('.bm-key');
+    reservedHeight = insetH + title.offsetHeight + px(ts.marginTop) + px(ts.marginBottom) + legend.offsetHeight + px(ls.marginTop) + px(ls.marginBottom) + (keyPanel.hidden?0:keyPanel.offsetHeight+4);
+    cssW = Math.max(100, Math.min(availableW - insetW, (availableH - reservedHeight) * 1.22));
+  }
+  cv.style.width = cssW + 'px'; cv.style.height = cssW / 1.22 + 'px';
   cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssW / 1.22 * dpr); const CW = cv.width, CH = cv.height; g.setTransform(1, 0, 0, 1, 0, 0);
+  const markerScale = Math.max(.55, Math.min(1, cssW / 800)), unit = dpr * markerScale, compact = cssW < 500;
+  card.dataset.compact=String(compact);
+  const markerPaint=[],markerLeaderPaint=[],markerLeaders=[],compactMarkerFallbacks=[];const paintMarker=fn=>compact?markerPaint.push(fn):fn();
   const s = Math.min(CW / M.width, CH / M.height), ox = (CW - M.width * s) / 2, oy = (CH - M.height * s) / 2;
-  g.fillStyle = '#2f7fa0'; g.fillRect(0, 0, CW, CH);
-  g.drawImage(M, ox, oy, M.width * s, M.height * s);
-  const to = (x, z) => [ox + W.mapX(x) * s, oy + W.mapZ(z) * s];
-  const pin = (x, z, r, col, label) => { r *= dpr; const [sx, sy] = to(x, z); g.fillStyle = '#241634'; g.beginPath(); g.arc(sx, sy, r + 3, 0, 7); g.fill(); g.fillStyle = col; g.beginPath(); g.arc(sx, sy, r, 0, 7); g.fill();
-    if (label) { g.fillStyle = '#241634'; g.font = `bold ${Math.round(r * 1.25)}px Bangers, Impact, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, sx, sy + 1); } };
+  g.fillStyle = '#2f7fa0'; g.fillRect(0, 0, CW, CH); g.drawImage(M, ox, oy, M.width * s, M.height * s);
+  const to = (x, z) => [ox + W.mapX(x) * s, oy + W.mapZ(z) * s], occupied = [], labels = [], markers = [];
+  const reserve = (x, y, w, h, kind, id) => { const box = {x:x-w/2,y:y-h/2,w,h,kind,id}; occupied.push(box); return box; };
+  const intersects = (a,b) => a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+  const P = K.A.player, [playerX, playerY] = to(P.x,P.z), playerRadius = 18 * unit;
+  const playerBox = reserve(playerX,playerY,2*playerRadius,2*playerRadius,'player','you');
+  // The NW sea corner is reserved before placing markers, so the compass cannot paint over one.
+  const compassX = 50*dpr, compassY = 50*dpr, compass = reserve(compassX,compassY,66*unit,66*unit,'compass','north');
+  paintMarker(()=>{g.save(); g.translate(compassX,compassY); g.scale(unit*.8,unit*.8); g.fillStyle='#fff4dc';g.strokeStyle='#241634';g.lineWidth=4;g.beginPath();g.arc(0,0,36,0,7);g.fill();g.stroke();g.fillStyle='#ff4fa3';g.beginPath();g.moveTo(0,-28);g.lineTo(10,4);g.lineTo(-10,4);g.closePath();g.fill();g.fillStyle='#241634';g.font='bold 16px Bangers, Impact';g.textAlign='center';g.textBaseline='middle';g.fillText('N',0,16);g.restore();});
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  for (const k in LM_ICONS) { const l = W.landmark && W.landmark[k]; if (!l || !l.o) continue; const p = l.o.getWorldPosition(new T.Vector3()); const [sx, sy] = to(p.x, p.z);
-    g.font = `${26 * dpr}px system-ui, "Apple Color Emoji", sans-serif`; g.fillText(LM_ICONS[k][0], sx, sy); g.font = `bold ${12 * dpr}px system-ui, sans-serif`; g.lineWidth = 4 * dpr; g.strokeStyle = '#fff4dc'; if (cssW >= 500) g.strokeText(LM_ICONS[k][1], sx, sy + 21 * dpr); g.fillStyle = '#241634'; if (cssW >= 500) g.fillText(LM_ICONS[k][1], sx, sy + 21 * dpr); }
-  { const [hx, hy] = to(W.HOME.x, W.HOME.z); g.font = `${26 * dpr}px system-ui, "Apple Color Emoji"`; g.fillText('🏡', hx, hy); }
-  K.A.cars.forEach(c => { if (c.kind === 'waymo') pin(c.x, c.z, 4, '#e8edf5'); });
-  for (const p of K.A.photos || []) if (!p.got) pin(p.x, p.z, 7, '#ff4fa3');
-  K.A.letters.forEach(l => { if (!l.got) pin(l.x, l.z, 11, '#ffcf3f', l.ch); });
-  const pz = K.A.pascal; pin(pz.x, pz.z, 12, '#ff7a3d', 'P');
-  const P = K.A.player; pin(P.x, P.z, 14, '#ffb020', 'K');
-  // compass
-  g.save(); g.translate(CW - 50 * dpr, 50 * dpr); g.scale(dpr * .8, dpr * .8); g.fillStyle = '#fff4dc'; g.strokeStyle = '#241634'; g.lineWidth = 4; g.beginPath(); g.arc(0, 0, 36, 0, 7); g.fill(); g.stroke(); g.fillStyle = '#ff4fa3'; g.beginPath(); g.moveTo(0, -28); g.lineTo(10, 4); g.lineTo(-10, 4); g.closePath(); g.fill(); g.fillStyle = '#241634'; g.font = 'bold 16px Bangers, Impact'; g.fillText('N', 0, 16); g.restore();
+  for (const k in LM_ICONS) { const l = W.landmark && W.landmark[k]; if (!l || !l.o) continue; const p = l.o.getWorldPosition(new T.Vector3()); const [sx,sy] = to(p.x,p.z);
+    paintMarker(()=>{g.font=`${26*unit}px system-ui,"Apple Color Emoji",sans-serif`;g.textAlign='center';g.textBaseline='middle';g.fillText(LM_ICONS[k][0],sx,sy);});reserve(sx,sy,28*unit,28*unit,'landmark',k);labels.push({key:k,text:LM_ICONS[k][1],sx,sy}); }
+  { const [hx,hy]=to(W.HOME.x,W.HOME.z);paintMarker(()=>{g.font=`${26*unit}px system-ui,"Apple Color Emoji"`;g.textAlign='center';g.textBaseline='middle';g.fillText('🏡',hx,hy);});reserve(hx,hy,28*unit,28*unit,'home','home'); }
+  // Keep nearby markers separate. Short leaders retain the exact original world location.
+  const placeMarker = (anchorX,anchorY,radius,id,kind='marker',offsetX=0,offsetY=0) => {
+    const pad=2*dpr, reach=radius+pad;
+    const boxAt=(x,y)=>({x:Math.max(pad,Math.min(CW-2*reach-pad,x-reach)),y:Math.max(pad,Math.min(CH-2*reach-pad,y-reach)),w:2*reach,h:2*reach,kind,id});
+    const candidates=[[anchorX+offsetX,anchorY+offsetY]];
+    for(let r=8*unit;r<=96*unit;r+=8*unit)for(let i=0;i<16;i++){const a=i*Math.PI/8;candidates.push([anchorX+offsetX+Math.cos(a)*r,anchorY+offsetY+Math.sin(a)*r]);}
+    const boxes=candidates.map(([x,y])=>boxAt(x,y));
+    const markerLine=b=>({id,from:[anchorX,anchorY],to:[b.x+reach,b.y+reach],lengthCSS:Math.hypot(b.x+reach-anchorX,b.y+reach-anchorY)/dpr});
+    const anchorInside=b=>anchorX>=b.x&&anchorX<=b.x+b.w&&anchorY>=b.y&&anchorY<=b.y+b.h;
+    const safeTrail=b=>{const l=markerLine(b);return l.lengthCSS<=48&&!occupied.some(o=>!anchorInside(o)&&mapSegmentHitsBox(l,o,dpr))&&!markerLeaders.some(o=>mapSegmentsCross(l,o)||mapSegmentHitsBox(o,b,dpr));};
+    let box=boxes.find(b=>!occupied.some(o=>intersects(b,o))&&(!compact||safeTrail(b)));
+    const trailSafe=!!box;
+    // Preserve visibility if a future scene is denser than the bounded search. Diagnostics disclose any remaining overlaps.
+    if(!box)box=boxes.sort((a,b)=>occupied.filter(o=>intersects(a,o)).length-occupied.filter(o=>intersects(b,o)).length)[0];
+    if(compact&&!trailSafe)compactMarkerFallbacks.push(id);
+    occupied.push(box);const x=box.x+reach,y=box.y+reach;
+    markers.push({...box,anchorX,anchorY,sx:x,sy:y,radius,displacement:Math.hypot(x-anchorX,y-anchorY)/dpr});
+    if(Math.hypot(x-anchorX,y-anchorY)>3*dpr){const line={from:[anchorX,anchorY],to:[x,y],lengthCSS:Math.hypot(x-anchorX,y-anchorY)/dpr};const draw=()=>{g.save();g.strokeStyle='#241634';g.globalAlpha=.55;g.lineWidth=dpr;g.beginPath();g.moveTo(anchorX,anchorY);g.lineTo(x,y);g.stroke();g.restore();};if(compact){if(trailSafe){line.id=id;markerLeaders.push(line);markerLeaderPaint.push(draw);}}else draw();}
+    return [x,y];
+  };
+  const pin=(x,z,r,col,label,id)=>{r*=unit;const [ax,ay]=to(x,z),[sx,sy]=placeMarker(ax,ay,r+3*unit,id);paintMarker(()=>{g.fillStyle='#241634';g.beginPath();g.arc(sx,sy,r+3*unit,0,7);g.fill();g.fillStyle=col;g.beginPath();g.arc(sx,sy,r,0,7);g.fill();
+    if(label){g.fillStyle='#241634';g.font=`bold ${Math.round(r*1.25)}px Bangers,Impact,sans-serif`;g.textAlign='center';g.textBaseline='middle';g.fillText(label,sx,sy+unit*.5);}});};
+  if(!compact)K.A.cars.forEach((c,i)=>{if(c.kind==='waymo')pin(c.x,c.z,4,'#e8edf5',null,'waymo-'+i);});
+  (K.A.photos||[]).forEach((p,i)=>{if(!p.got)pin(p.x,p.z,7,'#ff4fa3',null,'photo-'+i);});
+  K.A.letters.forEach((l,i)=>{if(!l.got)pin(l.x,l.z,11,'#ffcf3f',l.ch,'letter-'+i);});
+  const pz=K.A.pascal;pin(pz.x,pz.z,12,'#ff7a3d','P','pascal');
+  if(K.campaign){
+    const queue=K.campaign.jobs.filter(j=>K.campaign.collected.has(j)&&!K.campaign.deployed.has(j));
+    const targets=K.campaign.carried?K.campaign.pads.filter(p=>p.phase==='idle').map(p=>({x:p.approachWorld[0],z:p.approachWorld[2]})):K.campaign.jobs.filter(j=>j.phase==='available');
+    const next=targets.slice().sort((a,b)=>Math.hypot(a.x-P.x,a.z-P.z)-Math.hypot(b.x-P.x,b.z-P.z))[0];
+    if(next){const [x,y]=to(P.x,P.z),[tx,ty]=to(next.x,next.z);g.save();g.strokeStyle='#50631d';g.lineWidth=3*dpr;g.setLineDash([6*dpr,4*dpr]);g.beginPath();g.moveTo(x,y);g.lineTo(tx,ty);g.stroke();g.restore();}
+    K.campaign.jobs.forEach((j,i)=>{if(!K.campaign.collected.has(j))pin(j.x,j.z,9,'#b7f84a','F','folder-'+i);});
+    K.campaign.kiosks.forEach((q,i)=>{const [ax,ay]=to(q.x,q.z),[x,y]=placeMarker(ax,ay,14*unit,'deploy-'+i,'deploy',17*unit,-15*unit);paintMarker(()=>{g.save();g.translate(x,y);g.fillStyle='#8aa1a8';g.strokeStyle='#241634';g.lineWidth=3*unit;g.beginPath();g.moveTo(0,-12*unit);g.lineTo(12*unit,0);g.lineTo(0,12*unit);g.lineTo(-12*unit,0);g.closePath();g.fill();g.stroke();g.fillStyle='#241634';g.font=`bold ${14*unit}px sans-serif`;g.textAlign='center';g.fillText('D',0,unit*.5);g.restore();});});
+  }
+  // A halo and heading arrow identify Kyoto; collectibles retain their KYOTO letters.
+  paintMarker(()=>{g.save();g.translate(playerX,playerY);g.fillStyle='#ffb020';g.strokeStyle='#241634';g.lineWidth=2*unit;g.beginPath();g.arc(0,0,16*unit,0,7);g.fill();g.stroke();g.strokeStyle='#fff';g.lineWidth=3*unit;g.beginPath();g.arc(0,0,13.5*unit,0,7);g.stroke();
+  const [fx,fy]=to(P.x+Math.sin(P.heading),P.z+Math.cos(P.heading));g.rotate(Math.atan2(fy-playerY,fx-playerX)+Math.PI/2);g.fillStyle='#241634';g.beginPath();g.moveTo(0,-10*unit);g.lineTo(7*unit,7*unit);g.lineTo(0,3*unit);g.lineTo(-7*unit,7*unit);g.closePath();g.fill();g.restore();});
+  markers.push({...playerBox,anchorX:playerX,anchorY:playerY,sx:playerX,sy:playerY,radius:playerRadius,displacement:0});
+  // Place names stay at 10px on compact maps, using the same measured collision search.
+  const labelFont=compact?10:12;g.font=`bold ${labelFont*dpr}px system-ui,sans-serif`;g.textAlign='center';g.textBaseline='middle';
+  const placements=[];let compactLayout=null;
+  if(compact){
+    compactLayout=layoutCompactMapNames(labels,occupied,CW,CH,dpr,text=>g.measureText(text).width,markerLeaders);
+    for(const l of compactLayout.leaders){g.strokeStyle="#3c294c";g.lineWidth=dpr;g.beginPath();g.moveTo(...l.from);g.lineTo(...l.to);g.stroke();}
+    markerLeaderPaint.forEach(draw=>draw());markerPaint.forEach(draw=>draw());
+    g.font=`bold ${labelFont*dpr}px system-ui,sans-serif`;g.textAlign="center";g.textBaseline="middle";
+    for(const b of compactLayout.placements){g.fillStyle="#fff4dc";g.fillRect(b.x,b.y,b.w,b.h);g.fillStyle="#241634";g.fillText(b.text,b.x+b.w/2,b.y+b.h/2);placements.push(b);occupied.push(b);}
+    for(const l of compactLayout.fallbacks){g.fillStyle="#ffcf3f";g.strokeStyle="#241634";g.lineWidth=dpr;g.beginPath();g.arc(l.sx,l.sy,7*dpr,0,7);g.fill();g.stroke();g.fillStyle="#241634";g.font=`bold ${9*dpr}px system-ui,sans-serif`;g.fillText(l.number,l.sx,l.sy);}
+    el.querySelector(".bm-key").innerHTML=compactLayout.fallbacks.map(l=>`<span><b>${l.number}</b>${l.text}</span>`).join("");
+  }else for(const label of labels){
+    const w=g.measureText(label.text).width+8*dpr,h=(compact?16:20)*dpr,pad=4*dpr,candidates=[];
+    for(const dy of [27,-27,49,-49,71,-71,93,-93])for(const dx of [0,-40,40,-80,80,-120,120])candidates.push([label.sx+dx*dpr,label.sy+dy*dpr]);
+    const boxAt=(x,y)=>({x:Math.max(pad,Math.min(CW-w-pad,x-w/2)),y:Math.max(pad,Math.min(CH-h-pad,y-h/2)),w,h,kind:'label'});
+    let box=candidates.map(([x,y])=>boxAt(x,y)).find(b=>!occupied.some(o=>intersects(b,o)));
+    if(!box){const free=[];for(let y=pad;y<=CH-h-pad;y+=12*dpr)for(let x=pad;x<=CW-w-pad;x+=12*dpr){const b={x,y,w,h,kind:'label'};if(!occupied.some(o=>intersects(b,o)))free.push(b);}free.sort((a,b)=>Math.hypot(a.x+w/2-label.sx,a.y+h/2-label.sy)-Math.hypot(b.x+w/2-label.sx,b.y+h/2-label.sy));box=free[0];}
+    if(!box)continue;
+    occupied.push(box);const x=box.x+w/2,y=box.y+h/2;
+    if(Math.hypot(x-label.sx,y-label.sy)>34*dpr){g.strokeStyle='#3c294c';g.lineWidth=2*dpr;g.beginPath();g.moveTo(label.sx,label.sy);g.lineTo(Math.max(box.x,Math.min(box.x+w,label.sx)),Math.max(box.y,Math.min(box.y+h,label.sy)));g.stroke();}
+    g.fillStyle='#fff4dc';g.fillRect(box.x,box.y,w,h);g.fillStyle='#241634';g.fillText(label.text,x,y);placements.push({...label,...box});
+  }
+  const overlappingMarkers=[];for(let i=0;i<markers.length;i++)for(let j=i+1;j<markers.length;j++)if(intersects(markers[i],markers[j]))overlappingMarkers.push([markers[i].id,markers[j].id]);
+  const compassCoveredMarkers=markers.filter(m=>intersects(m,compass)).map(m=>m.id);
+  const drawnLeaders=compact?[...compactLayout.leaders,...markerLeaders]:[];let leaderCrossings=0,leaderMarkerIntersections=0;
+  for(let i=0;i<drawnLeaders.length;i++){const l=drawnLeaders[i];for(const other of drawnLeaders.slice(i+1))if(mapSegmentsCross(l,other))leaderCrossings++;for(const o of occupied){if(o.kind==='label'||o.id===(l.key||l.id))continue;const atOrigin=l.from[0]>=o.x&&l.from[0]<=o.x+o.w&&l.from[1]>=o.y&&l.from[1]<=o.y+o.h;if(!atOrigin&&mapSegmentHitsBox(l,o))leaderMarkerIntersections++;}}
+  UI.mapLayout={compact,numberedLandmarks:compactLayout?.fallbacks||[],placementOrder:compactLayout?.placementOrder||labels.map(l=>l.key),leaders:compactLayout?.leaders||[],maximumLandmarkLeaderLengthCSS:compactLayout?.maximumLeaderLengthCSS||0,maximumLeaderLengthCSS:Math.max(0,...drawnLeaders.map(l=>l.lengthCSS)),markerLeaders:compact?markerLeaders:[],compactMarkerFallbacks,leaderCrossings,leaderMarkerIntersections,leaderIntersectionLimits:'Own anchor/target boxes excluded; compact marker trails without a safe <=48px route omitted and reported in compactMarkerFallbacks.',keyPanelHeight:compact?el.querySelector('.bm-key').offsetHeight:0,width:CW,height:CH,cssWidth:cssW,cssHeight:cssW/1.22,dpr,markerScale,labelFont,availableW,availableH,reservedHeight,safe,labels:placements,expectedLabels:labels.length,unplacedLabels:labels.filter(l=>!placements.some(p=>p.key===l.key)&&!compactLayout?.fallbacks.some(p=>p.key===l.key)).map(l=>l.key),markers,overlappingMarkers,compass,compassCoveredMarkers,occupied};
 };
 
 /* ---------- touch controls ---------- */
