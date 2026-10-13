@@ -1,0 +1,3 @@
+Dog motion capture from *Mode-Adaptive Neural Networks for Quadruped Motion Control*, He Zhang, Sebastian Starke, Taku Komura and Jun Saito (SIGGRAPH 2018), distributed by [AI4Animation](https://github.com/sebastianstarke/AI4Animation/blob/master/AI4Animation/SIGGRAPH_2018/ReadMe.md).
+
+The raw motion data and adapted Kyoto locomotion are provided under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). Changes: selected cycles, direction retargeting, proportion adjustment, loop closure support-only contact correction, and swing-only foreleg polishing. This noncommercial game uses motion data only. The authors do not endorse KyotoKens. See provenance.json for source hashes and frame ranges. Three.js keeps its embedded MIT copyright notice.

@@ -209,25 +209,203 @@ function setGhost(on) { if (on === ghostOn && A.kyoto.ghostReady) return; ghostO
   A.kyoto.root.traverse(o => { if (!o.isMesh) return; for (const m of Array.isArray(o.material) ? o.material : [o.material]) { if (!m.userData.kyotoBase) m.userData.kyotoBase = { opacity: m.opacity, transparent: m.transparent, depthWrite: m.depthWrite }; const b = m.userData.kyotoBase; m.transparent = on || b.transparent; m.opacity = on ? b.opacity * .4 : b.opacity; m.depthWrite = on ? false : b.depthWrite; m.needsUpdate = true; } });
 }
 function juice(shake, squash, stop) { if (K.reduceMotion) return; g.shake = Math.max(g.shake || 0, shake); P.squash = Math.max(P.squash || 0, squash); g.hitStop = Math.max(g.hitStop || 0, stop || 0); }
-// Gait: stride cadence (Hz) rises sub-linearly with ground speed, continuous across the trot→run hand-off (run stance speed ≈ 8.5 u/s at 1×).
-const cadence = s => 1.6 * Math.pow(Math.max(s, 0) / 7, s < 7 ? .6 : .85);
+// Recorded amble, diagonal trot and gallop cycles retain the fixed arcade pace.
+const GAIT_STRIDE = { walk: 1.9724509915, trot: 2.8897555722, run: 5.8462164605 };
+const cadence = (s, name = 'run') => Math.max(s, 0) / GAIT_STRIDE[name];
 function playGait(k, s, braking) {
   const was = k.curName, prev = k.cur;
-  // overlapping bands (hysteresis) so the clip never flickers; a braking stop skips the in-between trot
-  const name = was === 'run' ? (s > 6 ? 'run' : braking ? (s > 3 ? 'run' : 'idle') : 'trot')
-    : was === 'trot' ? (s > 7.5 ? 'run' : s < (braking ? 1.2 : .45) ? 'idle' : 'trot')
-    : s > 7.5 ? 'run' : s > (braking ? 3 : .9) ? 'trot' : 'idle';
-  if (name === 'idle') return k.play('idle', braking ? .3 : .25);
+  let name;
+  if (s < (braking ? .6 : .35)) name = 'idle';
+  else if (was === 'run' && s > 6) name = 'run';
+  else if (s > 7.8) name = 'run';
+  else if (was === 'trot' && s > 2.5) name = 'trot';
+  else name = s > 3.2 ? 'trot' : 'walk';
+  if (name === 'idle') return k.play('idle', .20);
+  // Finish a support event before changing gait, rather than blending arbitrary leg phases.
+  if (prev && GAIT_STRIDE[was] && was !== name && s > .8) {
+    const phase = (prev.time / prev.getClip().duration) % 1;
+    if (phase > .10 && phase < .92) name = was;
+  }
   const clip = k.actions[name] && k.actions[name].getClip();
-  k.play(name, .2, U.clamp(cadence(s) * (clip ? clip.duration : 1), name === 'run' ? .7 : .35, name === 'run' ? 2.4 : 1.6));
-  // trot↔run: carry the stride phase across (front-left touchdown sits half a cycle apart in the two clips)
-  if (prev && k.cur !== prev && (was === 'trot' || was === 'run')) k.cur.time = ((prev.time / prev.getClip().duration + .5) % 1) * k.cur.getClip().duration;
+  k.play(name, .10, U.clamp(cadence(s, name) * (clip ? clip.duration : 1), .18, name === 'run' ? 1.8 : 2.6));
+  if (prev && k.cur !== prev && GAIT_STRIDE[was]) k.cur.time = 0;
+}
+function brakeOutgoing(k, s) {
+  for (const n of ['walk', 'trot', 'run']) { const a = k.actions[n]; if (a && a !== k.cur && a.isRunning()) a.timeScale = Math.min(a.timeScale, cadence(s, n) * a.getClip().duration); }
+}
+// Jump pose follows the body, not the clock. Measured jump-clip phases (paw_series.py): crouch 0, paws leave the floor ≈.10,
+// full tuck .25–.33, front paws reach the floor ≈.62, hind paws ≈.95. Airborne: rising maps vy0→0 onto .10→.29, falling holds the tuck,
+// and the last .32 s before the predicted touchdown extends to .60. Touchdown releases the clip so the hind paws come down during the gait fade.
+const JUMP = { lift: .10, apex: .29, hold: .36, reach: .60, lead: .32 };
+function driveJump(k, dt, h) {
+  const a = k.actions.jump; if (!a) return;
+  if (k.curName !== 'jump') {   // airborne without a jump (ledge drop, sea-lion bounce, bark ending mid-air): fade into the tuck
+    if (!(P.vy < -4 || P.vy > 4)) return;
+    launchJump(k, .15); P.airVy0 = Math.max(P.vy, 8); a.time = a.getClip().duration * (P.vy > 0 ? JUMP.lift : JUMP.hold);
+  }
+  if (P.vy > (P.airVy0 || 0)) P.airVy0 = P.vy;   // a fresh launch or bounce re-arms the rise
+  const vy0 = Math.max(P.airVy0 || 0, 8), tLand = (P.vy + Math.sqrt(Math.max(0, P.vy * P.vy + 54 * Math.max(0, h)))) / 27;
+  let p = P.vy > 0 ? U.lerp(JUMP.apex, JUMP.lift, U.clamp(P.vy / vy0, 0, 1)) : U.lerp(JUMP.apex, JUMP.hold, U.clamp(-P.vy / vy0, 0, 1));
+  if (P.vy <= 0) { const e = U.clamp(1 - tLand / JUMP.lead, 0, 1); p = U.lerp(p, JUMP.reach, e * e * (3 - 2 * e)); }
+  const dur = a.getClip().duration; k.jumpDriven = true; a.paused = true; a.time = U.damp(a.time, p * dur, 24, dt);
+}
+// jumpDriven marks the freeze as ours, so the LoopOnce clamp at the clip's end is never mistaken for it (no per-frame un-pause / re-finish).
+function landJump(k) {
+  const a = k.actions.jump; if (!a || !k.jumpDriven) return;
+  k.jumpDriven = false; a.paused = false; a.timeScale = 1.6; P.airVy0 = 0;   // play the hind-paw touchdown (.60→1) while the gait fades in
+}
+// every jump starts at clip speed with no rise left over from an earlier launch or bounce
+function launchJump(k, fade) {
+  k.once('jump', fade); k.jumpDriven = false; P.airVy0 = 0; if (k.actions.jump) k.actions.jump.timeScale = 1;
+}
+
+// Terrain and turn response affect the visual rig, never its physical movement speed.
+// Recorded limb motion stays intact; a ground plane seats the whole visual rig.
+function clearGaitGround(k, dt) {
+  if (![P.x, P.y, P.z, P.heading, dt].every(Number.isFinite)) return;
+  const grounded = P.onGround && !P.board;
+  const moving = grounded && !P.poseT && !P.barkT && P.speed > .8;
+  const rate = dt > 0 && k.gaitHeading != null ? U.angDiff(P.heading, k.gaitHeading) / dt : 0;
+  const lean = moving ? U.clamp(-rate * .025, -.14, .14) * U.clamp(P.speed / 10, 0, 1) : 0;
+  k.gaitHeading = P.heading;
+  // Start from this frame's mixer pose and heading, never last frame's terrain tilt.
+  k.root.quaternion.setFromAxisAngle(new T.Vector3(0, 1, 0), P.heading);
+  if (!grounded) {
+    k.gaitClearance = 0; k.gaitTerrain = null;
+    k.gaitPitch = U.damp(k.gaitPitch || 0, 0, 12, dt); k.gaitSlopeRoll = U.damp(k.gaitSlopeRoll || 0, 0, 12, dt); k.gaitLean = U.damp(k.gaitLean || 0, 0, 10, dt);
+    k.root.quaternion.multiply(new T.Quaternion().setFromAxisAngle(new T.Vector3(1, 0, 0), -k.gaitPitch))
+      .multiply(new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 0, 1), k.gaitSlopeRoll + k.gaitLean)).normalize();
+    return;
+  }
+  if (!k.gaitFloorSamples) {
+    const body = k.root.getObjectByName('Kyoto');
+    if (!body || !body.isSkinnedMesh) return;
+    const geometry = K.hoodie?.originalBodyGeometry || body.geometry, pos = geometry.attributes.position, si = geometry.attributes.skinIndex, sw = geometry.attributes.skinWeight;
+    const samples = [], feet = [];
+    for (const name of ['fl_pawL', 'fl_pawR', 'bl_pawL', 'bl_pawR']) {
+      const bi = body.skeleton.bones.findIndex(b => b.name === name), vertices = [];
+      for (let i = 0; i < pos.count; i++) {
+        const ii = [si.getX(i), si.getY(i), si.getZ(i), si.getW(i)], ww = [sw.getX(i), sw.getY(i), sw.getZ(i), sw.getW(i)];
+        if (ii.some((b, j) => b === bi && ww[j] > .4)) vertices.push({ position: new T.Vector3().fromBufferAttribute(pos, i), indices: ii, weights: ww });
+      }
+      if (!vertices.length) continue;
+      const low = Math.min(...vertices.map(v => v.position.y)), sole = vertices.filter(v => v.position.y <= low + .035), chosen = new Set();
+      for (const axis of ['x', 'y', 'z']) for (const sign of [-1, 1]) chosen.add(sole.reduce((a, b) => sign * a.position[axis] < sign * b.position[axis] ? a : b));
+      samples.push(...sole);
+      const side = name.endsWith('L') ? 'L' : 'R', prefix = name.startsWith('fl') ? 'fl' : 'bl';
+      const bones = [prefix + '_up' + side, prefix + '_lo' + side, name].map(n => body.skeleton.bones.find(b => b.name === n));
+      if (bones.every(Boolean)) feet.push({ name, bones, sole });
+    }
+    k.gaitFloorSamples = { body, samples, feet };
+  }
+  k.root.updateMatrixWorld(true);
+  const { body, samples } = k.gaitFloorSamples; body.skeleton.update();
+  const skinPoints = (selected = samples) => {
+    k.root.updateMatrixWorld(true); body.skeleton.update();
+    const matrices = body.skeleton.bones.map((_, i) => new T.Matrix4().fromArray(body.skeleton.boneMatrices, i * 16));
+    return selected.map(sample => {
+      const bound = sample.position.clone().applyMatrix4(body.bindMatrix), v = new T.Vector3();
+      for (let j = 0; j < 4; j++) if (sample.weights[j] > 0) v.addScaledVector(bound.clone().applyMatrix4(matrices[sample.indices[j]]), sample.weights[j]);
+      return v.applyMatrix4(body.bindMatrixInverse).applyMatrix4(body.matrixWorld);
+    }).filter(v => [v.x, v.y, v.z].every(Number.isFinite) && Math.abs(v.x - P.x) <= 4 && Math.abs(v.z - P.z) <= 4 && Math.abs(v.y - P.y) <= 4);
+  };
+  const forwardX = Math.sin(P.heading), forwardZ = Math.cos(P.heading), rightX = Math.cos(P.heading), rightZ = -Math.sin(P.heading);
+  const headingPoints = skinPoints();
+  let rear = -.9, front = .9, left = -.35, right = .35;
+  for (const v of headingPoints) {
+    const dx = v.x - P.x, dz = v.z - P.z, f = dx * forwardX + dz * forwardZ, r = dx * rightX + dz * rightZ;
+    rear = Math.min(rear, U.clamp(f, -2.5, 2.5)); front = Math.max(front, U.clamp(f, -2.5, 2.5));
+    left = Math.min(left, U.clamp(r, -1, 1)); right = Math.max(right, U.clamp(r, -1, 1));
+  }
+  // Fit the body plane across the actual anatomical footprint, including the
+  // forward swing toe. A player-centered short normal can point down into a valley.
+  const probes = [];
+  for (const f of [rear, (rear + front) * .5, front]) for (const r of [left, right]) {
+    const x = P.x + forwardX * f + rightX * r, z = P.z + forwardZ * f + rightZ * r;
+    const y = W.groundAt(x, z, P.y + .4, .02);
+    if (Number.isFinite(y) && Math.abs(y - P.y) <= 4) probes.push({ f, r, y });
+  }
+  const mean = probes.reduce((a, p) => ({ f: a.f + p.f, r: a.r + p.r, y: a.y + p.y }), { f: 0, r: 0, y: 0 });
+  const count = Math.max(1, probes.length); mean.f /= count; mean.r /= count; mean.y /= count;
+  let ff = 0, rr = 0, fr = 0, fy = 0, ry = 0;
+  for (const p of probes) { const f = p.f - mean.f, r = p.r - mean.r, y = p.y - mean.y; ff += f * f; rr += r * r; fr += f * r; fy += f * y; ry += r * y; }
+  const determinant = ff * rr - fr * fr;
+  const slopeF = determinant > 1e-8 ? (fy * rr - ry * fr) / determinant : 0;
+  const slopeR = determinant > 1e-8 ? (ry * ff - fy * fr) / determinant : 0;
+  const pitch = U.clamp(Math.atan(slopeF), -.65, .65), slopeRoll = U.clamp(Math.atan(slopeR), -.65, .65);
+  k.gaitPitch = U.damp(k.gaitPitch || 0, pitch, 16, dt); k.gaitSlopeRoll = U.damp(k.gaitSlopeRoll || 0, slopeRoll, 16, dt); k.gaitLean = U.damp(k.gaitLean || 0, lean, 10, dt);
+  k.root.quaternion.setFromAxisAngle(new T.Vector3(0, 1, 0), P.heading)
+    .multiply(new T.Quaternion().setFromAxisAngle(new T.Vector3(1, 0, 0), -k.gaitPitch))
+    .multiply(new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 0, 1), k.gaitSlopeRoll + k.gaitLean)).normalize();
+  let clearance = 0;
+  for (const v of skinPoints()) {
+    const ground = W.groundAt(v.x, v.z, P.y + .4, .02);
+    if (Number.isFinite(ground)) clearance = Math.max(clearance, ground - v.y + .002);
+  }
+  k.gaitTerrain = { footprint: { rear, front, left, right }, slopeF, slopeR, targetPitch: pitch, requiredClearance: clearance, cap: .32, limited: clearance > .32 };
+  k.gaitClearance = Math.max(Math.min(clearance, .32), (k.gaitClearance || 0) * Math.exp(-dt * 24));
+  if (k.gaitClearance > 1e-5) { k.root.position.y += k.gaitClearance; k.root.updateMatrixWorld(true); }
+  // Correct only a sole that still intersects uneven terrain after the bounded
+  // body clearance. Solve in actor-root coordinates so squash cannot change reach.
+  const uneven = Math.abs(k.gaitPitch) + Math.abs(k.gaitSlopeRoll) > .015 || probes.some(p => Math.abs(p.y - P.y) > .035);
+  k.gaitTerrainRestore = [];
+  const ik = k.gaitTerrain.ik = { attempts: 0, clamps: 0, invalid: 0, maximumCorrection: 0, remainingPenetration: 0, feet: [] };
+  if (uneven) {
+    const rootInverse = k.root.matrixWorld.clone().invert();
+    const rigPosition = bone => bone.getWorldPosition(new T.Vector3()).applyMatrix4(rootInverse);
+    const rigQuaternion = object => {
+      const p = new T.Vector3(), q = new T.Quaternion(), scale = new T.Vector3();
+      new T.Matrix4().multiplyMatrices(rootInverse, object.matrixWorld).decompose(p, q, scale); return q.normalize();
+    };
+    const setRigQuaternion = (bone, q) => {
+      bone.quaternion.copy(rigQuaternion(bone.parent).invert().multiply(q).normalize()); k.root.updateMatrixWorld(true);
+    };
+    const deficit = foot => {
+      let need = 0;
+      for (const v of skinPoints(foot.sole)) {
+        const ground = W.groundAt(v.x, v.z, P.y + .4, .02);
+        if (Number.isFinite(ground)) need = Math.max(need, ground + .002 - v.y);
+      }
+      return need;
+    };
+    for (const foot of k.gaitFloorSamples.feet || []) {
+      let need = deficit(foot); if (need <= .0001) continue;
+      for (const bone of foot.bones) k.gaitTerrainRestore.push({ bone, quaternion: bone.quaternion.clone() });
+      const [upper, lower, paw] = foot.bones, A = rigPosition(upper), capturedKnee = rigPosition(lower), C = rigPosition(paw);
+      const l1 = A.distanceTo(capturedKnee), l2 = capturedKnee.distanceTo(C), keepPaw = rigQuaternion(paw);
+      const entry = { name: foot.name, initialPenetration: need, passes: 0, maxReach: 0, clamped: false, remaining: need };
+      for (let pass = 0; pass < 3 && need > .0001; pass++) {
+        const correction = Math.min(need, .24), targetWorld = paw.getWorldPosition(new T.Vector3()); targetWorld.y += correction;
+        const target = targetWorld.applyMatrix4(rootInverse), delta = target.clone().sub(A), distance = delta.length();
+        if (![l1, l2, distance, target.x, target.y, target.z].every(Number.isFinite) || l1 < .01 || l2 < .01 || target.length() > 4 || distance < .01) { ik.invalid++; break; }
+        const length = U.clamp(distance, Math.abs(l1 - l2) + .002, (l1 + l2) * .998), direction = delta.divideScalar(distance);
+        const clamped = Math.abs(length - distance) > .001; if (clamped) { entry.clamped = true; ik.clamps++; }
+        entry.maxReach = Math.max(entry.maxReach, distance / (l1 + l2));
+        const pole = capturedKnee.clone().sub(A), projection = pole.dot(direction); pole.addScaledVector(direction, -projection);
+        if (pole.lengthSq() < 1e-8) { ik.invalid++; break; } pole.normalize();
+        const along = (l1 * l1 - l2 * l2 + length * length) / (2 * length), height = Math.sqrt(Math.max(0, l1 * l1 - along * along));
+        const knee = A.clone().addScaledVector(direction, along).addScaledVector(pole, height), end = A.clone().addScaledVector(direction, length);
+        const beforeUpper = rigQuaternion(upper), upperDirection = rigPosition(lower).sub(A).normalize();
+        setRigQuaternion(upper, new T.Quaternion().setFromUnitVectors(upperDirection, knee.clone().sub(A).normalize()).multiply(beforeUpper).normalize());
+        const B = rigPosition(lower), currentLower = rigPosition(paw).sub(B).normalize(), beforeLower = rigQuaternion(lower);
+        setRigQuaternion(lower, new T.Quaternion().setFromUnitVectors(currentLower, end.clone().sub(B).normalize()).multiply(beforeLower).normalize());
+        setRigQuaternion(paw, keepPaw);
+        ik.attempts++; entry.passes++; ik.maximumCorrection = Math.max(ik.maximumCorrection, correction);
+        need = deficit(foot);
+      }
+      entry.remaining = need; ik.remainingPenetration = Math.max(ik.remainingPenetration, need); ik.feet.push(entry);
+    }
+  }
 }
 
 function updatePlayer(dt) {
   for (const k in g.buffs) if (g.buffs[k] > 0) g.buffs[k] = Math.max(0, g.buffs[k] - dt);
   P.inv = Math.max(0, P.inv - dt); P.stun = Math.max(0, P.stun - dt);
   const k = A.kyoto; P.interactT = Math.max(0, (P.interactT || 0) - dt); setGhost(g.buffs.ghost > 0);
+  // PropertyMixer can skip a constant track after an external pose edit.
+  // Restore the untouched captured pose before it advances this frame.
+  for (const saved of k.gaitTerrainRestore || []) saved.bone.quaternion.copy(saved.quaternion);
+  k.gaitTerrainRestore = null;
   if (P.ext || P.mode !== 'walk') P.gait = 0;   // other modes drive their own clips; walking resumes from a standstill cadence
   if (P.ext) return P.ext(dt);   // a feature module (e.g. surf) drives Kyoto
   if (P.mode === 'car') return updateDrive(dt);
@@ -253,7 +431,7 @@ function updatePlayer(dt) {
     }
   }
   P.jumpBuffer = inp.jump ? .13 : Math.max(0, (P.jumpBuffer || 0) - dt); P.coyote = P.onGround ? .1 : Math.max(0, (P.coyote || 0) - dt);
-  if (P.jumpBuffer > 0 && P.coyote > 0 && P.stun <= 0) { P.vy = onBoard ? 11.5 : 10.5; P.onGround = false; P.jumpBuffer = P.coyote = 0; k.once('jump', .08); juice(.06, 0); sfx.yip(); }
+  if (P.jumpBuffer > 0 && P.coyote > 0 && P.stun <= 0) { P.vy = onBoard ? 11.5 : 10.5; P.onGround = false; P.jumpBuffer = P.coyote = 0; launchJump(k, .08); juice(.06, 0); sfx.yip(); }
   const accel = P.onGround ? (onBoard ? 12 : mag ? 22 : 30) : 9;   // releasing the stick brakes over ~0.1 s (≈0.5 m from full speed) instead of freezing mid-stride
   P.vx = U.damp(P.vx || 0, MOVE.x * max * align, accel, dt); P.vz = U.damp(P.vz || 0, MOVE.y * max * align, accel, dt);
   if (!mag && P.onGround && (onBoard || Math.hypot(P.vx, P.vz) < .5)) P.vx = P.vz = 0;
@@ -272,14 +450,20 @@ function updatePlayer(dt) {
   // animation
   k.root.position.set(P.x, P.y, P.z); k.root.rotation.y = P.heading; k.board.visible = onBoard;
   P.barkT = Math.max(0, (P.barkT || 0) - dt); P.poseT = Math.max(0, (P.poseT || 0) - dt);
-  P.gait = U.damp(P.gait || 0, P.speed, P.speed < (P.gait || 0) ? 26 : 18, dt);   // measured speed, de-noised so wall scrapes and step-ups do not jolt the cadence; drops faster so legs settle with the body
+  P.gait = P.speed;   // physical velocity already eases acceleration and braking; match actual stance travel without a second lag
   if (P.poseT > 0) k.play('sit', .08);
-  else if (P.barkT <= 0 && (k.curName !== 'jump' || P.onGround)) {
+  else if (P.barkT <= 0 && !P.onGround && onBoard && k.curName !== 'jump') k.play('idle', .2);   // board ledge drop keeps the riding stance
+  else if (P.barkT <= 0 && !P.onGround) driveJump(k, dt, P.y - gr);
+  else if (P.barkT <= 0) {
+    landJump(k);
     if (onBoard) k.play('idle', .2); else playGait(k, P.gait, !mag);
   }
+  if (k.curName !== 'jump') landJump(k);   // anything that took over mid-air (bark, sit) never leaves the jump frozen
+  brakeOutgoing(k, P.gait);
   if (k.tongue) k.tongue.visible = P.mode !== 'hug';   // happy pant, always
   const blink = P.inv > 0 && Math.floor(g.time * 12) % 2 === 0; k.root.visible = !blink || P.inv > 2.2;
   k.mixer.update(dt);
+  clearGaitGround(k, dt);
 }
 function wiggleFree() {
   const pz = A.pascal; P.mode = 'walk'; P.inv = 3; P.vy = 9; P.onGround = false; P.speed = 15;
@@ -508,6 +692,7 @@ function updateInteract(dt) {
   if (P.interactT > 0) { UI.prompt(null); return; }
   if (P.mode !== 'walk' || P.ext) { UI.prompt(P.mode === 'cable' ? 'E · hop off' : (A.boss.riding ? 'SPACE · hop off · E after 1.5s' : null)); return; }
   if (K.boss && K.boss.canRide()) { UI.prompt('E · hop on the Vespa'); if (inp.act) K.boss.tryRide(); return; }
+  if (K.campaign && K.campaign.interact()) return;
   const ph = photoSpot(); if (ph) { UI.prompt(ph.hold > .08 ? 'HOLD STILL… SAY CHEESE!' : 'E · SNAP A PHOTO'); if (inp.act) snapPhoto(ph); return; }
   let car = null, cd = 7; for (const c of A.cars) { if (c.kind !== 'waymo' || c.mode === 'driven') continue; const d = Math.hypot(c.x - P.x, c.z - P.z); if (d < cd && P.onGround && Math.abs(P.y - c.bot) < 1.8 && W.los(P.x, P.z, c.x, c.z)) { cd = d; car = c; } }
   if (car) { UI.prompt('E · hail this Waymo'); if (inp.act) enterCar(car); return; }
@@ -876,6 +1061,7 @@ function tick(now) {
 
 /* ================= BOOT ================= */
 const LIST = [['missionrock', 'models/missionrock.json'], ['kyoto', 'models/kyoto.json'], ['human', 'models/human.json'], ['ui3d', 'models/ui3d.json'], ['buildings', 'models/buildings.json'], ['landmarks', 'models/landmarks.json'], ['vehicles', 'models/vehicles.json'], ['props', 'models/props.json'], ['props2', 'models/props2.json'], ['animals', 'models/animals.json'], ['pascal', 'models/pascal.json']]
+  .concat([['campaign_icon', 'art/campaign/kyoto-icon.png'], ['campaign_desk', 'art/campaign/kyoto-desk.png'], ['flypod_logo', 'art/campaign/flypod-logo.svg']])
   .concat(['bb_tokens', 'bb_hire', 'bb_gooddog', 'bb_agents', 'bb_agi', 'bb_mcp', 'mag_forbarks', 'mag_wagged', 'mag_treat', 'mag_lederhosen', 'mural_mission1', 'mural_mission2', 'mural_mission3', 'mural_tech', 'mural_fog', 'arcade_sign'].map(n => [n, 'tex/' + n + '.jpg'])).map(([k, u]) => [k, u + '?v=' + (K.VER || '1')]);
 /* Yield so the browser can paint the latest status before the next blocking step (timeout fallback: rAF pauses in hidden tabs). */
 const paint = () => new Promise(r => { let d = 0; const go = () => { if (!d) { d = 1; setTimeout(r, 0); } }; requestAnimationFrame(go); setTimeout(go, 120); });

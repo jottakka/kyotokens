@@ -1,6 +1,6 @@
 # Kyoto(kens) — Pacing the Frontier
 
-<p align="center"><img src="art/kyotokens-cover.png" alt="Kyoto(kens) game cover" width="360"></p>
+<p align="center"><img src="art/kyotokens-agent-cover-clean-v4.png" alt="Kyoto(kens) game cover" width="360"></p>
 
 A static, single-page Three.js browser game. You play Kyoto, a golden retriever let loose on a
 stylized San Francisco: collect the **K Y O T O** letters, bark at agents, hack drones, chase the
@@ -51,6 +51,37 @@ Append `?mute=1` to start with all audio muted (handy for automated checks):
 
 On touch devices a virtual stick, jump/bark buttons, and an action bar appear automatically.
 
+## Kyoto Agent city update
+
+Kyoto starts in a dark purple hoodie with the violet code emblem. Kyoto Agent ads use the
+supplied icon and desk portrait separately. Oracle Park has a hero billboard and wall flyers;
+a few more ads appear around the city. Japantown includes a Peace Pagoda, cherry trees,
+shops, and a bronze Kyoto memorial thanking him for helping San Francisco against Godzilla.
+
+**Flypod Fetch:** find five lime project folders, press `E` to fetch them, then bring them to
+one of the friendly Flypod bots in Japantown or near Oracle Park and press `E` to deploy. Open the
+map with `L` or tap the objective card: `F` marks folders and `D` marks deploy bots.
+Completed projects earn 6,500 tokens in total. The savings are a fictional game score;
+the quest makes no external deployments or claims about real hosting costs. A new run resets it.
+
+Brand references: [Flypod docs](https://docs.flypod.dev/), [Flypod](https://flypod.dev/),
+[Kyoto Agent](https://kyotoagent.dev/). The Flypod mark is the official favicon SVG, with
+charcoal `#0b0f12`, lime `#b7f84a`, and ivory `#f2f4f7` from the live site stylesheet.
+The two Kyoto reference images remain unchanged in `art/campaign/`.
+
+**Kyoto Vision:** press `V` or click the eye button to switch the 3D world to a blue/yellow
+approximation of dog colour vision. The preference persists between visits; the HTML HUD
+retains its normal colours for readability. This is an artistic approximation, not a precise
+simulation of canine perception. Sound, song and pause now have labelled icons and focus feedback.
+
+The cover in `art/kyotokens-agent-cover-clean-v4.png` was edited with the built-in image generator.
+The exact edit prompt is saved in `art/campaign/cover-clean-v4-prompt.txt`; the previous covers remain intact.
+The cleaned cover removes the coins, ground capsules, inset map, rear Kyoto Agent billboard, two floating blue background props and green ground arrows. Kyoto and both drones remain, including the close Flypod and its blue rotor halo.
+
+Local review scenes: `?scene=agenthoodie&mute=1`, `?scene=japantown&mute=1`,
+`?scene=campaignstadium&mute=1`, and `?scene=flypodcheck&mute=1`.
+The last scene checks collection distance, all five rewards, duplicate deployment, and restart.
+
 ## Folder map
 
 ```
@@ -76,3 +107,23 @@ Everything else — models, textures, photos, art — is a local static file in 
 
 Served assets are cache-busted with a single `?v=` string that matches `K.VER` in `index.html`;
 bump both together when changing anything in `src/` or the texture set.
+The cover sleeve has a sewn ribbed cuff with the foreleg exposed below it.
+
+## Current release status
+
+This version is published as-is at the user's request. The current hoodie clipping repair
+received 4/5 from an independent Opus 5.5 High review; the remaining request was an
+old-versus-new comparison of the exposed bandana above the neckline. This release is
+not a claim of a perfect or fully approved DLC.
+
+The accepted fast movement and dog rig remain unchanged. Original body geometry is
+retained; a projected opaque-clothing stencil hides covered fur while preserving
+exposed anatomy. Removing the hoodie restores the original geometry and materials.
+
+### Canine animation attribution and reproduction
+
+The walk/run motion uses selected AI4Animation SIGGRAPH 2018 dog motion-capture data
+under **CC BY-NC 4.0**. This is a non-commercial game. Source attribution, selected
+BVH takes, hashes and the reproducible authoring pipeline are in
+[art/authoring/canine/ATTRIBUTION.md](art/authoring/canine/ATTRIBUTION.md).
+The bundled Three.js authoring runtime retains its MIT notice.

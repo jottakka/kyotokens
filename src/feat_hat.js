@@ -80,8 +80,9 @@ function addHairFlower() {
 }
 function fitKyoto() {
   const dog = A.kyoto, cap = hat.cap, head = dog.root.getObjectByName('head');
-  // Bind-space skull bounds: head extends along +Y; the crown faces -Z.
-  head.add(cap); cap.scale.setScalar(.88); cap.position.set(0, .50, -.30); cap.rotation.set(-Math.PI / 2, 0, 0); cap.visible = true;
+  // Measured original upper-skull skin: seat 5cm lower and 6.5cm rearward.
+  // Preserve cap mesh/material/scale; slight forward bill tilt stays clear of the eyes.
+  head.add(cap); cap.scale.setScalar(.88); cap.position.set(0, .435, -.25); cap.rotation.set(-Math.PI / 2 + .10, 0, 0); cap.visible = true;
 }
 K.on('build', () => {
   const s = W.HOME.start, q = W.freeWalk(s.x + 7, s.z - 7, .8);

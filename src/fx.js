@@ -40,7 +40,7 @@
 
   /* Fuzzy fur fringe: back-face shells whose extrusion spikes (cellular noise, bind space) along the fur flow, scaled by _fluff. */
   const FR = { freq: 4.6, base: .014, amp: .17 };
-  const frGLSL = `attribute float _fluff; uniform float frFreq, frBase, frAmp, frInk;
+  const frGLSL = `attribute float _fluff, _frInkBias; uniform float frFreq, frBase, frAmp, frInk;
 vec3 frH(vec3 p){ p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6))); return fract(sin(p) * 43758.5453); }
 float frCell(vec3 x){ vec3 p = floor(x), f = fract(x); float d = 8.0;
   for (int k = -1; k <= 1; k++) for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) { vec3 b = vec3(float(i), float(j), float(k)); vec3 r = b - f + frH(p + b); d = min(d, dot(r, r)); }
@@ -49,7 +49,7 @@ float frCell(vec3 x){ vec3 p = floor(x), f = fract(x); float d = 8.0;
   const frExtrude = `
   { float sp = pow(frCell(position * frFreq), 2.2);
     vec3 fdir = normalize(normalize(normal) + vec3(0.0, -.85, -.35) * .9);
-    transformed += fdir * (_fluff * (frBase + frAmp * sp)) + normalize(normal) * frInk; }`;
+    transformed += fdir * (_fluff * (frBase + frAmp * sp)) + normalize(normal) * (frInk + (frInk > 0.0 ? _frInkBias : 0.0)); }`;
   function frPatch(sh, ink, amp) {
     sh.uniforms.frFreq = { value: FR.freq }; sh.uniforms.frBase = { value: FR.base }; sh.uniforms.frAmp = { value: amp == null ? FR.amp : amp }; sh.uniforms.frInk = { value: ink };
     sh.vertexShader = frGLSL + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>' + frExtrude);
@@ -57,13 +57,30 @@ float frCell(vec3 x){ vec3 p = floor(x), f = fract(x); float d = 8.0;
   K.skinFringe = function (mesh, groupFilter, inkW) {
     const g = subGeo(mesh.geometry, groupFilter);
     if (!g.attributes._fluff) return null;
+    // The black hull folds through the painted fur at the hip and throat
+    // during a gallop. Inset only those concave outline patches; the original
+    // body, skinning and coloured fur shell remain unchanged.
+    const inkBias = new Float32Array(g.attributes.position.count);
+    if (mesh.name === 'Kyoto') {
+      const p = g.attributes.position;
+      let affected = 0;
+      for (let i = 0; i < p.count; i++) {
+        const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+        const hip = Math.sqrt(((Math.abs(x) - .395) / .21) ** 2 + ((y - 1.02) / .38) ** 2 + ((z + .24) / .25) ** 2);
+        const throat = Math.sqrt((x / .44) ** 2 + ((y - 1.13) / .20) ** 2 + ((z - 1.255) / .18) ** 2);
+        const weight = 1 - T.MathUtils.smoothstep(Math.min(hip, throat), .70, 1);
+        if (weight > 0) { inkBias[i] = -.011 * weight; affected++; }
+      }
+      g.userData.concaveInkVertices = affected;
+    }
+    g.setAttribute('_frInkBias', new T.BufferAttribute(inkBias, 1));
     const src = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).find(mm => mm && /_coat/.test(mm.name));
     const map = src && src.map, vc = !!g.attributes.color;   // painted coats: the fringe samples the same texture
     const fm = new T.MeshToonMaterial({ vertexColors: vc, map: vc ? null : map, color: vc || map ? 0xffffff : (src ? src.color : 0xffffff), skinning: true, side: T.BackSide, gradientMap: K.gradFur });
     const amp = map ? FR.amp * .72 : FR.amp;   // painted coats already carry the fur detail: softer spikes
     fm.onBeforeCompile = sh => frPatch(sh, 0.0, amp); fm.customProgramCacheKey = () => 'fringe' + amp; fm.name = 'fur_fringe'; fm.userData.fringe = 1; fm.userData.frAmp = amp;
     const im = new T.MeshBasicMaterial({ color: new T.Color('#1e1026').convertSRGBToLinear(), side: T.BackSide, skinning: true });
-    im.onBeforeCompile = sh => frPatch(sh, inkW, amp); im.customProgramCacheKey = () => 'fringeInk' + inkW + amp; im.name = 'fur_fringe_ink'; im.userData.fringe = 2; im.userData.inkW = inkW; im.userData.frAmp = amp;
+    im.onBeforeCompile = sh => frPatch(sh, inkW, amp); im.customProgramCacheKey = () => 'fringeInk-concave-v2' + inkW + amp; im.name = 'fur_fringe_ink'; im.userData.fringe = 2; im.userData.inkW = inkW; im.userData.frAmp = amp;
     const out = [];
     for (const m of [fm, im]) {
       const s = new T.SkinnedMesh(g, m); s.name = mesh.name + (m === fm ? '_fringe' : '_fringeInk'); s.userData.ink = true; s.castShadow = false; s.receiveShadow = false;

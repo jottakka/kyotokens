@@ -1,0 +1,49 @@
+{
+  "source": "Mode-Adaptive Neural Networks for Quadruped Motion Control",
+  "authors": [
+    "He Zhang",
+    "Sebastian Starke",
+    "Taku Komura",
+    "Jun Saito"
+  ],
+  "year": 2018,
+  "sourcePage": "https://github.com/sebastianstarke/AI4Animation/blob/master/AI4Animation/SIGGRAPH_2018/ReadMe.md",
+  "rawArchive": "https://starke-consult.de/AI4Animation/SIGGRAPH_2018/MotionCapture.zip",
+  "license": "CC-BY-NC-4.0",
+  "licenseURL": "https://creativecommons.org/licenses/by-nc/4.0/",
+  "licenseDeclaration": "https://github.com/sebastianstarke/AI4Animation#copyright-information",
+  "changes": "Selected real canine cycles direction-retargeted to original Kyoto rig; loop offset closed; RF/RH support-only geometry-aware correction. Original mesh/skin/rig and legacy actions preserved. No source code or neural weights used. Swing-only foreleg reach reduction and early-mid palmar wrist fold; captured late extension and stance/contact poses preserved. Local anatomical correction follows Opus Final3 criticism and independent native image comparison.",
+  "sources": [
+    {
+      "file": "D1_025_KAN01_001.bvh",
+      "frames": [
+        345,
+        384
+      ],
+      "clip": "walk",
+      "sha256": "da004c683146a3dd34665cab96cf01b7798b77ecc9d588a5153e179b86369165"
+    },
+    {
+      "file": "D1_031_KAN01_001.bvh",
+      "frames": [
+        528,
+        554
+      ],
+      "clip": "trot",
+      "sha256": "7a19e5ad8d1de88343be69bb07880a152d84c0959431de56240711edf1475497"
+    },
+    {
+      "file": "D1_010_KAN01_002.bvh",
+      "frames": [
+        25,
+        52
+      ],
+      "clip": "run",
+      "sha256": "b7f7c3016f7751772ff8506cd877a1d042beac7edf4fa70c92051a90a1413a62"
+    }
+  ],
+  "originalKyotoSHA256": "cce437ab421c0c75b470b043332d3fd3875f8b29a6952222176c87c7f1304c2e",
+  "originalKyotoGitCommit": "286421b",
+  "currentCandidateSHA256": "85cb550f05729a2db1d97fec2be9de0d7ae46a1f8f130b21730e6f906bc4bfd0",
+  "acceptance": "Candidate under strict review; provenance is not visual approval."
+}

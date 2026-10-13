@@ -35,7 +35,7 @@ A.updateTags = function (dt) {
   for (const t of A.tags) {
     if (t.bt > 0) { t.bt -= dt; if (t.bt <= 0) t.b.hidden = true; }
     let show = t.obj.visible !== false && (!t.n.hidden || !t.b.hidden) && !A.hideTags;
-    if (show) { t.obj.getWorldPosition(wp); wp.y += t.headY; const d = wp.distanceTo(K.camera.position); if (d > t.maxD) show = false; else { const p = A.project(wp); if (!p.ok) show = false; else { t.el.style.transform = `translate(${p.x.toFixed(1)}px,${p.y.toFixed(1)}px)`; t.el.style.zIndex = String(1000 - Math.round(d)); } } }
+    if (show) { t.obj.getWorldPosition(wp); wp.y += t.headY; const d = wp.distanceTo(K.camera.position); if (d > t.maxD) show = false; else { const p = A.project(wp); if (!p.ok || (K.ads && K.ads.tagOccluded && K.ads.tagOccluded(wp,K.camera.position))) show = false; else { t.el.style.transform = `translate(${p.x.toFixed(1)}px,${p.y.toFixed(1)}px)`; t.el.style.zIndex = String(1000 - Math.round(d)); } } }
     if (show !== t.shown) { t.el.style.display = show ? '' : 'none'; t.shown = show; }
   }
 };

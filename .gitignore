@@ -31,3 +31,7 @@ npm-debug.log*
 yarn-error.log*
 .cache/
 tmp/
+# Local repair captures, provider transcripts and scratch state
+.repair/
+__pycache__/
+*.pyc

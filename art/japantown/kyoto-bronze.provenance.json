@@ -1,0 +1,12 @@
+{
+  "source_sha256": "cce437ab421c0c75b470b043332d3fd3875f8b29a6952222176c87c7f1304c2e",
+  "asset_sha256": "94e3023acece2714834aa9ba4e94688770a5f87885bb21ee0ef10bcd1be60204",
+  "pose": "original sit frame24; static tail lift and .161m weighted fore-paw grounding",
+  "vertices": 20018,
+  "polygons": 40042,
+  "static": true,
+  "animations": 0,
+  "armatures": 0,
+  "author": "GPT-6.1",
+  "sculpture": "baked sit pose with gently lifted cast tail and grounded feet, welded smooth casting, chased relief, bronze/verdigris"
+}

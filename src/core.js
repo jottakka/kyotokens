@@ -37,8 +37,8 @@ const scene = K.scene = new T.Scene();
 const camera = K.camera = new T.PerspectiveCamera(58, VW / VH, .15, 2400);
 
 function makeRT() {
-  const pr = renderer.getPixelRatio(); const rt = new T.WebGLRenderTarget(Math.floor(VW * pr), Math.floor(VH * pr), { minFilter: T.LinearFilter, magFilter: T.LinearFilter, format: T.RGBAFormat, encoding: T.sRGBEncoding });
-  rt.depthTexture = new T.DepthTexture(); rt.depthTexture.type = T.UnsignedIntType;
+  const pr = renderer.getPixelRatio(); const rt = new T.WebGLRenderTarget(Math.floor(VW * pr), Math.floor(VH * pr), { minFilter: T.LinearFilter, magFilter: T.LinearFilter, format: T.RGBAFormat, encoding: T.sRGBEncoding, depthBuffer:true, stencilBuffer:true });
+  rt.depthTexture = new T.DepthTexture(); rt.depthTexture.format=T.DepthStencilFormat; rt.depthTexture.type=T.UnsignedInt248Type;
   return rt;
 }
 let rt = makeRT();
@@ -46,12 +46,12 @@ const postMat = new T.ShaderMaterial({
   uniforms: {
     tColor: { value: rt.texture }, tDepth: { value: rt.depthTexture }, res: { value: new T.Vector2(VW * DPR, VH * DPR) },
     near: { value: camera.near }, far: { value: camera.far }, time: { value: 0 }, pause: { value: 0 }, danger: { value: 0 },
-    lineW: { value: Math.max(1, DPR * 0.8) }, ink: { value: new T.Color('#241634') }, flash: { value: 0 }, speed: { value: 0 },
+    lineW: { value: Math.max(1, DPR * 0.8) }, ink: { value: new T.Color('#241634') }, flash: { value: 0 }, speed: { value: 0 }, dogVision: { value: 0 },
   },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
   fragmentShader: `
     precision highp float;
-    uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec2 res; uniform float near, far, time, pause, danger, lineW, flash, speed; uniform vec3 ink;
+    uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec2 res; uniform float near, far, time, pause, danger, lineW, flash, speed, dogVision; uniform vec3 ink;
     varying vec2 vUv;
     float ld(vec2 uv){ float z = texture2D(tDepth, uv).x; float n = z * 2.0 - 1.0; return (2.0 * near * far) / (far + near - n * (far - near)); }
     float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -100,6 +100,10 @@ const postMat = new T.ShaderMaterial({
         float line = step(.72, hsh) * smoothstep(.34, .62, ra) * smoothstep(.0, .25, run) * (1.0 - smoothstep(.25, .6, run));
         col = mix(col, vec3(1.0, 0.98, 0.92), line * speed * .55); }
       col = mix(col, vec3(1.0, 0.97, 0.88), flash);
+      // Blue/yellow game approximation of canine dichromacy, not a clinical simulation.
+      // Apply to the complete world image, including ink and danger cues; HTML UI remains readable.
+      if (dogVision > 0.0) { vec3 lin = pow(max(col, 0.0), vec3(2.2)); float yl = dot(lin.rg, vec2(0.29275, 0.70725));
+        vec3 dv = vec3(yl, yl, lin.b + 0.02234 * (lin.g - lin.r)); col = mix(col, pow(max(dv, 0.0), vec3(1.0 / 2.2)), dogVision); }
       gl_FragColor = vec4(col, 1.0);
     }`,
   depthTest: false, depthWrite: false,
@@ -116,8 +120,8 @@ uiScene.add(new T.HemisphereLight('#fff1f6', '#6b4a8c', .75));
 const uiSun = new T.DirectionalLight('#ffe2c0', .8); uiSun.position.set(-3, 5, 6); uiScene.add(uiSun);
 K.render = function (t) {
   postMat.uniforms.time.value = K.reduceMotion ? 0 : t;
-  if (!K.usePost) { renderer.setRenderTarget(null); renderer.render(scene, camera); }
-  else { renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null); renderer.render(postScene, postCam); }
+  if (!K.usePost) { renderer.setRenderTarget(null); renderer.state.buffers.stencil.setMask(0xff); renderer.render(scene, camera); }
+  else { renderer.setRenderTarget(rt); renderer.state.buffers.stencil.setMask(0xff); renderer.render(scene, camera); renderer.setRenderTarget(null); renderer.state.buffers.stencil.setMask(0xff); renderer.render(postScene, postCam); }
   if (K.UI && K.UI.cam && K.UI.cam.children.length) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(uiScene, uiCam); renderer.autoClear = true; }
 };
 function onResize() {
@@ -318,6 +322,12 @@ K.testKey = c => { if (!keys[c]) PRESS.add(c); keys[c] = true; };
 const ACT_KEYS = K.ACT_KEYS = { ArrowUp: 'Space', ArrowDown: 'KeyB', ArrowLeft: 'KeyQ', ArrowRight: 'KeyE' };   // ↑ jump · ↓ bark · ← Kyotoken · → act
 addEventListener('keydown', e => {
   if (e.code === 'Escape' && K.locked) { K.unlock(true); e.preventDefault(); return; }
+  const control = e.target instanceof Element && e.target.closest('button,a[href],input,select,textarea,[contenteditable="true"]');
+  // Plain Tab keeps the gameplay Photos shortcut. Shift+Tab enters native HUD focus;
+  // once on a control, or in a menu, Tab and activation keys belong to that control.
+  if (e.code === 'Tab' && (e.shiftKey || control || (K.game && K.game.state !== 'play') || (K.agent && K.agent.open))) { K.consumeKey('Tab'); return; }
+  if (control && ['Space', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) return;
+  if (e.code === 'Escape' && control && K.game && K.game.state === 'play') { control.blur(); K.resetInput(); e.preventDefault(); return; }
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
   const code = ACT_KEYS[e.code] || e.code;   // arrows are action keys: WASD moves
   if (!e.repeat) { PRESS.add(code); if (K.sfx) { K.sfx.init(); K.sfx.resume(); } }
